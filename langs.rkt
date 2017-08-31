@@ -16,7 +16,9 @@
   (Expr (e)
     x
     c
-    (block s* ... e))
+    (block s* ... e)
+    (fn (x* ...) e)
+    (e e* ...))
 
   (Stmt (s)
     (def x e)
