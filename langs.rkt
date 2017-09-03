@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide Core parse-Core)
+(provide Core parse-Core LexCore)
 (require nanopass/base)
 
 (define (name? name)
@@ -41,3 +41,20 @@
     (dyn n)))
 
 (define-parser parse-Core Core)
+
+(define-language LexCore
+  (extends Core)
+
+  (Expr (e)
+    (- (fn (x* ...) e))
+    (+ (fn (n* ...) e))
+    (- x)
+    (+ n))
+
+  (Stmt (s)
+    (- (def x e))
+    (+ (def n e)))
+
+  (Var (x)
+    (- (lex n))
+    (- (dyn n))))

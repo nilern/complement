@@ -10,11 +10,16 @@
   (define cst (parse input))
   (pretty-print cst)
 
-  (printf "\n---\n\n")
+  (printf "\n===\n\n")
 
   (define acst (alphatize cst))
   (pretty-print acst)
 
   (printf "\n---\n\n")
   
-  (eval-Core acst))
+  (eval-Core acst)
+
+  (printf "\n===\n\n")
+
+  (define lcst (introduce-dyn-env acst))
+  (pretty-print lcst))
