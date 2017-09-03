@@ -1,7 +1,6 @@
 #lang racket/base
 
 (provide Core parse-Core)
-
 (require nanopass/base)
 
 (define name? symbol?)

@@ -1,9 +1,20 @@
 #lang racket/base
 
 (module+ main
-  (require "parse.rkt")
-  (require "eval.rkt")
+  (require racket/pretty
+           "parse.rkt" "passes.rkt" "eval.rkt")
 
   (define input
     (open-input-string (vector-ref (current-command-line-arguments) 0)))
-  (eval-Core (parse input)))
+
+  (define cst (parse input))
+  (pretty-print cst)
+
+  (printf "\n---\n\n")
+
+  (define acst (alphatize cst))
+  (pretty-print acst)
+
+  (printf "\n---\n\n")
+  
+  (eval-Core acst))
