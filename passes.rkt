@@ -18,15 +18,18 @@
                 ([stmt stmts])
         (nanopass-case (Core Stmt) stmt
           [(def (lex ,n) ,e) (hash-set env n (gensym n))]
-          [else env]))))
+          [else env])))
+
+    (define (push-frame env bindings)
+      (hash-union env bindings #:combine (λ (_ v) v))))
   
   (Expr : Expr (cst env) -> Expr ()
     [(block ,s* ... ,e)
-     (define env* (hash-union env (block-bindings s*)))
+     (define env* (push-frame env (block-bindings s*)))
      `(block ,(map (λ (stmt) (Stmt stmt env*)) s*) ...
              ,(Expr e env*))]
     [(fn (,x* ...) ,e)
-     (define env* (hash-union env (param-bindings x*)))
+     (define env* (push-frame env (param-bindings x*)))
      `(fn (,(map (λ (var) (Var var env*)) x*) ...)
           ,(Expr e env*))])
 
