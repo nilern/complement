@@ -98,7 +98,7 @@
         [(app) (match (reverse $1)
                  [(list expr) expr]
                  [(cons f args) (with-output-language (Core Expr)
-                                  `(,f ,args ...))])])
+                                  `(call ,f ,args ...))])])
 
       (app
         [(simple) (list $1)]
@@ -114,7 +114,7 @@
         [(DYN) (with-output-language (Core Var) `(dyn ,$1))])
 
       (datum
-        [(datom) $1])
+        [(datom) (with-output-language (Core Expr) `(const ,$1))])
 
       (datom
         [(INT) $1]))))

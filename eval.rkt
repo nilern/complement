@@ -93,7 +93,7 @@
   (nanopass-case (Core Expr) expr
     [(fn (,x* ...) ,e)
      (continue cont (value:$fn x* e lenv))]
-    [(,e ,e* ...)
+    [(call ,e ,e* ...)
      (define cont* (cont:$fn cont lenv denv e*))
      (eval-expr cont* lenv denv e)]
     [(block ,s* ... ,e)
@@ -105,7 +105,7 @@
                [denv* (env:push-block denv dbs)]
                [cont* (cont:$block cont lenv* denv* stmts e)])
           (eval-stmt cont* lenv* denv* stmt))])]
-    [,c       (continue cont c)]
+    [(const ,c)       (continue cont c)]
     [(lex ,n) (continue cont (env:ref lenv n))]
     [(dyn ,n) (continue cont (env:ref denv n))]))
 

@@ -3,21 +3,34 @@
 (provide Core parse-Core)
 (require nanopass/base)
 
-(define name? symbol?)
+(define (name? name)
+  (and (symbol? name)
+       (let ([name-str (symbol->string name)])
+         (or (< (string-length name-str) 2)
+             (not (equal? (substring name-str 0 2) "__"))))))
 
-(define const? number?)
+(define (const? v)
+  (or number? char? boolean? symbol?))
+
+(define (primop? name)
+  (and (symbol? name)
+       (let ([name-str (symbol->string name)])
+         (and (>= (string-length name-str) 2)
+              (equal? (substring name-str 0 2) "__")))))
 
 (define-language Core
   (terminals
     (name (n))
-    (const (c)))
+    (const (c))
+    (primop (p)))
   
   (Expr (e)
-    x
-    c
     (block s* ... e)
     (fn (x* ...) e)
-    (e e* ...))
+    (call e e* ...)
+    (primcall p e* ...)
+    x
+    (const c))
 
   (Stmt (s)
     (def x e)
