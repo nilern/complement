@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide Cst DeclCst LexDeclCst LexCst)
+(provide Cst DeclCst DynDeclCst LexCst)
 (require nanopass/base)
 
 (define (name? name)
@@ -47,12 +47,19 @@
     (- (block s* ... e))
     (+ (block (x* ...) s* ... e))))
 
-(define-language LexDeclCst
+(define-language DynDeclCst
   (extends DeclCst)
 
   (Expr (e)
     (- (block (x* ...) s* ... e))
-    (+ (block (n* ...) s* ... e))
+    (+ (block (n* ...) s* ... e))))
+
+(define-language LexCst
+  (extends DynDeclCst)
+
+  (Expr (e)
+    (- (block (n* ...) s* ... e))
+    (+ (block s* ... e))
     (- (fn (x* ...) e))
     (+ (fn (n* ...) e))
     (- x)
@@ -65,10 +72,3 @@
   (Var (x)
     (- (lex n))
     (- (dyn n))))
-
-(define-language LexCst
-  (extends LexDeclCst)
-
-  (Expr (e)
-    (- (block (n* ...) s* ... e))
-    (+ (block s* ... e))))

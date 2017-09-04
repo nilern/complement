@@ -26,10 +26,10 @@
 
   (printf "\n===\n\n")
 
-  (define ldcst (introduce-dyn-env dcst))
-  (pretty-print ldcst)
+  (define ddcst (lex-straighten dcst))
+  (pretty-print ddcst)
 
   (printf "\n===\n\n")
 
-  (define lcst (straighten-blocks ldcst))
+  (define lcst (introduce-dyn-env ddcst))
   (pretty-print lcst))
