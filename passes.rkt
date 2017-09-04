@@ -1,6 +1,6 @@
 #lang racket
 
-(provide alphatize infer-decls introduce-dyn-env)
+(provide alphatize infer-decls introduce-dyn-env straighten-blocks)
 (require racket/hash nanopass/base
          "langs.rkt")
 
@@ -54,9 +54,9 @@
   (Expr : Expr (cst) -> Expr ()
     [(block ,[s*] ... ,[e]) `(block (,(binders s*) ...) ,s* ... ,e)]))
 
-(define-pass introduce-dyn-env : DeclCst (cst) -> LexCst ()
+(define-pass introduce-dyn-env : DeclCst (cst) -> LexDeclCst ()
   (definitions
-    (with-output-language (LexCst Expr)
+    (with-output-language (LexDeclCst Expr)
       (define (block-bindings decls)
         (define-values (bindings lex-decls)
           (for/fold ([bindings '()] [lex-decls '()])
@@ -80,14 +80,14 @@
                        (cons n* lex-params))])))
         (values (reverse bindings) (reverse lex-params))))
     
-    (with-output-language (LexCst Stmt)
+    (with-output-language (LexDeclCst Stmt)
       (define (emit-init denv-name)
         `(def ,denv-name (primcall __denvNew)))
       (define (emit-push denv-name* denv-name bindings)
         `(def ,denv-name*
            (primcall __denvPush ,denv-name ,(flatten bindings) ...))))
       
-    (with-output-language (LexCst Expr)
+    (with-output-language (LexDeclCst Expr)
       (define (emit-get denv-name name)
         `(primcall __denvGet ,denv-name (const ,name)))
       (define (emit-set denv-name name expr)
@@ -123,3 +123,23 @@
     `(block (,denv-name)
             ,(emit-init denv-name)
             ,(Expr cst denv-name))))
+
+(define-pass straighten-blocks : LexDeclCst (cst) -> LexCst ()
+  (definitions
+    (with-output-language (LexCst Stmt)
+      (define (emit-init name)
+        `(def ,name (primcall __boxNew))))
+    (with-output-language (LexCst Expr)
+      (define (emit-set name expr)
+        `(primcall __boxSet ,name ,expr))
+      (define (emit-get name)
+        `(primcall __boxGet ,name))))
+  
+  (Expr : Expr (cst) -> Expr ()
+    [(block (,n* ...) ,[s*] ... ,[e])
+     `(block ,(append (map emit-init n*) s*) ... ,e)]
+    [(fn (,n* ...) ,[e]) `(fn (,n* ...) ,e)]
+    [,n (emit-get n)])
+
+  (Stmt : Stmt (cst) -> Stmt ()
+    [(def ,n ,[e]) (emit-set n e)]))
