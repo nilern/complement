@@ -43,14 +43,14 @@
 (struct $def (var expr))
 
 (define (app->var-list app)
-  (map (λ (expr) (nanopass-case (Core Expr) expr [,x x]))
+  (map (λ (expr) (nanopass-case (Cst Expr) expr [,x x]))
        app))
 
 (define parse-decls
   (match-lambda
     [(cons ($fn-header params stmt) decls)
      (define body (extract-block (cons stmt decls)))
-     (with-output-language (Core Expr) `(fn (,params ...) ,body))]
+     (with-output-language (Cst Expr) `(fn (,params ...) ,body))]
     [(and stmts (cons _ _)) (extract-block stmts)]))
 
 (define (extract-block decls)
@@ -59,14 +59,14 @@
       [(list (and (not (? $fn-header?) (? $def?)) expr))
        (values '() expr)]
       [(cons ($def var expr) decls)
-       (define stmt (with-output-language (Core Stmt) `(def ,var ,expr)))
+       (define stmt (with-output-language (Cst Stmt) `(def ,var ,expr)))
        (define-values (stmts expr*) (extract decls))
        (values (cons stmt stmts) expr*)]
       [(cons (and (not (? $fn-header?)) stmt) decls)
        (define-values (stmts expr) (extract decls))
        (values (cons stmt stmts) expr)]))
   (define-values (stmts expr) (extract decls))
-  (with-output-language (Core Expr) `(block ,stmts ... ,expr)))
+  (with-output-language (Cst Expr) `(block ,stmts ... ,expr)))
 
 (define parse-expr
   (parser
@@ -97,7 +97,7 @@
       (expr
         [(app) (match (reverse $1)
                  [(list expr) expr]
-                 [(cons f args) (with-output-language (Core Expr)
+                 [(cons f args) (with-output-language (Cst Expr)
                                   `(call ,f ,args ...))])])
 
       (app
@@ -110,11 +110,11 @@
         [(datum) $1])
 
       (var
-        [(LEX) (with-output-language (Core Var) `(lex ,$1))]
-        [(DYN) (with-output-language (Core Var) `(dyn ,$1))])
+        [(LEX) (with-output-language (Cst Var) `(lex ,$1))]
+        [(DYN) (with-output-language (Cst Var) `(dyn ,$1))])
 
       (datum
-        [(datom) (with-output-language (Core Expr) `(const ,$1))])
+        [(datom) (with-output-language (Cst Expr) `(const ,$1))])
 
       (datom
         [(INT) $1]))))

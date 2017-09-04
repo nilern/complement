@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide Core parse-Core LexCore)
+(provide Cst DeclCst LexCst)
 (require nanopass/base)
 
 (define (name? name)
@@ -18,7 +18,7 @@
          (and (>= (string-length name-str) 2)
               (equal? (substring name-str 0 2) "__")))))
 
-(define-language Core
+(define-language Cst
   (terminals
     (name (n))
     (const (c))
@@ -40,12 +40,19 @@
     (lex n)
     (dyn n)))
 
-(define-parser parse-Core Core)
-
-(define-language LexCore
-  (extends Core)
+(define-language DeclCst
+  (extends Cst)
 
   (Expr (e)
+    (- (block s* ... e))
+    (+ (block (x* ...) s* ... e))))
+
+(define-language LexCst
+  (extends DeclCst)
+
+  (Expr (e)
+    (- (block (x* ...) s* ... e))
+    (+ (block (n* ...) s* ... e))
     (- (fn (x* ...) e))
     (+ (fn (n* ...) e))
     (- x)

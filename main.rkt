@@ -17,9 +17,14 @@
 
   (printf "\n---\n\n")
   
-  (eval-Core acst)
+  (eval-Cst acst)
 
   (printf "\n===\n\n")
 
-  (define lcst (introduce-dyn-env acst))
+  (define dcst (infer-decls acst))
+  (pretty-print dcst)
+
+  (printf "\n===\n\n")
+
+  (define lcst (introduce-dyn-env dcst))
   (pretty-print lcst))

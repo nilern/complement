@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide eval-Core)
+(provide eval-Cst)
 
 (require racket/match
          nanopass/base
@@ -63,7 +63,7 @@
 
 (define (block-binders stmts)
   (define (stmt-binders stmt)
-    (nanopass-case (Core Stmt) stmt
+    (nanopass-case (Cst Stmt) stmt
       [(def (lex ,n) ,e) (values (list n) '())]
       [(def (dyn ,n) ,e) (values '() (list n))]
       [,e (values '() '())]))
@@ -75,7 +75,7 @@
 
 (define (fn-binders params args)
   (define (param-binders param arg)
-    (nanopass-case (Core Var) param
+    (nanopass-case (Cst Var) param
       [(lex ,n) (values (list (cons n arg)) '())]
       [(dyn ,n) (values '() (list (cons n arg)))]))
 
@@ -90,7 +90,7 @@
 ;;;; Eval
 
 (define (eval-expr cont lenv denv expr)
-  (nanopass-case (Core Expr) expr
+  (nanopass-case (Cst Expr) expr
     [(fn (,x* ...) ,e)
      (continue cont (value:$fn x* e lenv))]
     [(call ,e ,e* ...)
@@ -110,7 +110,7 @@
     [(dyn ,n) (continue cont (env:ref denv n))]))
 
 (define (eval-stmt cont lenv denv stmt)
-  (nanopass-case (Core Stmt) stmt
+  (nanopass-case (Cst Stmt) stmt
     [(def ,x ,e)
      (eval-expr (cont:$def cont lenv denv x) lenv denv e)]
     [,e (eval-expr cont lenv denv e)]))
@@ -137,7 +137,7 @@
      (eval-stmt (cont:$block cont* lenv denv s* e) lenv denv s)]
     
     [(cont:$def cont* lenv denv var)
-     (set-box! (nanopass-case (Core Var) var
+     (set-box! (nanopass-case (Cst Var) var
                  [(lex ,n) (env:ref lenv n)]
                  [(dyn ,n) (env:ref denv n)])
                value)
@@ -156,5 +156,5 @@
 
 ;;;; API
 
-(define (eval-Core expr)
+(define (eval-Cst expr)
   (eval-expr (cont:$halt) (env:empty) (env:empty) expr))
