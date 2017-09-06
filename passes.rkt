@@ -1,6 +1,6 @@
 #lang racket
 
-(provide alphatize infer-decls introduce-dyn-env lex-straighten)
+(provide alphatize infer-decls lex-straighten introduce-dyn-env cps-convert)
 (require racket/hash nanopass/base
          "langs.rkt")
 
@@ -146,3 +146,96 @@
   (let ([denv-name (gensym 'denv)])
     `(block ,(emit-init denv-name)
             ,(Expr cst denv-name))))
+
+(define-pass cps-convert : LexCst (cst) -> CPS ()
+  (definitions
+    (struct $cont:fn (cont arges) #:transparent)
+    (struct $cont:args (cont arges callee argas) #:transparent)
+    (struct $cont:primargs (cont arges op argas) #:transparent)
+    (struct $cont:block (cont stmts expr) #:transparent)
+    (struct $cont:def (cont name) #:transparent)
+    (struct $cont:halt () #:transparent)
+
+    (with-output-language (CPS Atom)
+      (define (emit-atom aexpr)
+        (if (name? aexpr)
+          aexpr
+          `(const ,aexpr))))
+    (with-output-language (CPS Expr)
+      (define (emit-cont cont cont-name)
+        (match cont
+          [($cont:halt) cont-name]
+          [_
+           (define v (gensym 'v))
+           `(fn (,v) ,(eval-expr v cont cont-name))]))
+
+      (define (emit-continue cont-name arg)
+        `(call ,cont-name ,(emit-atom arg)))
+      (define (emit-call cont cont-name f args)
+        (match (emit-cont cont cont-name)
+          [(and (? name?) k) `(call ,f ,k ,(map emit-atom args) ...)]
+          [kfn
+           (define k (gensym 'k))
+           `(block (def ,k ,kfn)
+                   (call ,f ,k ,(map emit-atom args) ...))]))
+      (define (emit-primcall cont cont-name primop args)
+        (match (emit-cont cont cont-name)
+          [(and (? name?) k) `(primcall ,primop ,k ,(map emit-atom args) ...)]
+          [kfn
+           (define k (gensym 'k))
+           `(block (def ,k ,kfn)
+                   (primcall ,primop ,k ,(map emit-atom args) ...))]))
+    
+      (define (continue cont cont-name aexpr)
+        (match cont
+          [($cont:fn cont* arges)
+           (match arges
+             ['() (emit-call cont* cont-name aexpr '())]
+             [(cons arge arges)
+              (eval-expr arge ($cont:args cont* arges aexpr '()) cont-name)])]
+          [($cont:args cont* '() f argas)
+           (emit-call cont* cont-name f (reverse (cons aexpr argas)))]
+          [($cont:args cont* (cons arge arges) f argas)
+           (eval-expr arge ($cont:args cont* arges f (cons aexpr argas)) cont-name)]
+          [($cont:primargs cont* '() op argas)
+           (emit-primcall cont* cont-name op (reverse (cons aexpr argas)))]
+          [($cont:primargs cont* (cons arge arges) op argas)
+           (define cont** ($cont:primargs cont* arges op (cons aexpr argas)))
+           (eval-expr arge cont** cont-name)]
+          [($cont:block cont* '() expr)
+           (eval-expr expr cont* cont-name)]
+          [($cont:block cont* (cons stmt stmts) expr)
+           (eval-stmt stmt ($cont:block cont* stmts expr) cont-name)]
+          [($cont:def cont* name)
+           `(block (def ,name ,aexpr)
+                   ,(eval-expr name cont* cont-name))]
+          [($cont:halt) (emit-continue cont-name aexpr)]))))
+  
+  (eval-expr : Expr (expr cont cont-name) -> Expr ()
+    [(fn (,n* ...) ,e)
+     (define f (gensym 'f))
+     (define k (gensym 'k))
+     `(block
+        (def ,f (fn (,k ,n* ...) ,(eval-expr e ($cont:halt) k)))
+        ,(continue cont cont-name f))]
+    [(block ,s* ... ,e)
+     (match s*
+       ['() (eval-expr e cont cont-name)]
+       [(cons stmt stmts)
+        (eval-stmt stmt ($cont:block cont stmts e) cont-name)])]
+    [(call ,e ,e* ...)
+     (eval-expr e ($cont:fn cont e*) cont-name)]
+    [(primcall ,p ,e* ...)
+     (match e*
+       ['() (emit-primcall cont cont-name p '())]
+       [(cons arge arges)
+        (eval-expr arge ($cont:primargs cont arges p '()) cont-name)])]
+    [,n (continue cont cont-name n)]
+    [(const ,c) (continue cont cont-name c)])
+
+  (eval-stmt : Stmt (stmt cont cont-name) -> Expr ()
+    [(def ,n ,e) (eval-expr e ($cont:def cont n) cont-name)]
+    [,e (eval-expr e cont cont-name)])
+
+  (let ((k (gensym 'halt)))
+    `(fn (,k) ,(eval-expr cst ($cont:halt) k))))

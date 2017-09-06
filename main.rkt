@@ -32,4 +32,9 @@
   (printf "\n===\n\n")
 
   (define lcst (introduce-dyn-env ddcst))
-  (pretty-print lcst))
+  (pretty-print lcst)
+
+  (printf "\n===\n\n")
+
+  (define cps (cps-convert lcst))
+  (pretty-print cps))
