@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS)
+(provide name? const? primop? Cst DeclCst DynDeclCst LexCst parse-LexCst CPS)
 (require nanopass/base)
 
 (define (name? name)
@@ -73,20 +73,51 @@
     (- (lex n))
     (- (dyn n))))
 
-(define-language CPS
-  (extends LexCst)
+(define-parser parse-LexCst LexCst)
 
+;(define-language CPS
+;  (extends LexCst)
+;
+;  (Expr (e)
+;;    (- (block s* ... e)) TODO (?)
+;;    (+ (block s* ... a))
+;    (- (call e e* ...))
+;    (+ (call a a* ...))
+;    (- (primcall p e* ...))
+;    (+ (primcall p a* ...))
+;    (- (const c))
+;    (- n)
+;    (+ a))
+;
+;  (Atom (a)
+;    (+ (const c))
+;    (+ n)))
+
+(define-language CPS
+  (terminals
+    (name (n))
+    (const (c))
+    (primop (p)))
+
+  (entry Expr)
+
+  (Cont (k)
+    (cont n (n* ...) s* ... t))
+
+  (Stmt (s)
+    (def n e)
+    e)
+
+  (Transfer (t)
+    (continue n a* ...)
+    (call a n a* ...))
+  
   (Expr (e)
-;    (- (block s* ... e)) TODO (?)
-;    (+ (block s* ... a))
-    (- (call e e* ...))
-    (+ (call a a* ...))
-    (- (primcall p e* ...))
-    (+ (primcall p a* ...))
-    (- (const c))
-    (- n)
-    (+ a))
+    (fn k* ... n)
+    (call a a* ...)
+    (primcall p a* ...)
+    a)
 
   (Atom (a)
-    (+ (const c))
-    (+ n)))
+    n
+    (const c)))
