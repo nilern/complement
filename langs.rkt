@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide name? const? primop? Cst DeclCst DynDeclCst LexCst parse-LexCst CPS)
+(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS)
 (require nanopass/base)
 
 (define (name? name)
@@ -72,26 +72,6 @@
   (Var (x)
     (- (lex n))
     (- (dyn n))))
-
-(define-parser parse-LexCst LexCst)
-
-;(define-language CPS
-;  (extends LexCst)
-;
-;  (Expr (e)
-;;    (- (block s* ... e)) TODO (?)
-;;    (+ (block s* ... a))
-;    (- (call e e* ...))
-;    (+ (call a a* ...))
-;    (- (primcall p e* ...))
-;    (+ (primcall p a* ...))
-;    (- (const c))
-;    (- n)
-;    (+ a))
-;
-;  (Atom (a)
-;    (+ (const c))
-;    (+ n)))
 
 (define-language CPS
   (terminals

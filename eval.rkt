@@ -31,12 +31,16 @@
   (define (empty) ($env #f '()))
 
   (define (push-fn parent bindings)
-    ($env bindings parent))
+    (match bindings
+      ['() parent]
+      [_ ($env bindings parent)]))
 
   (define (push-block parent binders)
-    ($env (map (λ (name) (cons name (box undefined)))
-               binders)
-          parent))
+    (match binders
+      ['() parent]
+      [_ ($env (map (λ (name) (cons name (box undefined)))
+                    binders)
+               parent)]))
 
   (define (ref env name)
     (match-define ($env bs p) env)

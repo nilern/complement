@@ -109,9 +109,13 @@
     (with-output-language (LexCst Stmt)
       (define (emit-init denv-name)
         `(def ,denv-name (primcall __denvNew)))
-      (define (emit-push denv-name* denv-name bindings)
-        `(def ,denv-name*
-           (primcall __denvPush ,denv-name ,(flatten bindings) ...))))
+      (define (emit-push denv-name bindings)
+        (match bindings
+          ['() (values #f denv-name)]
+          [_ (define denv-name* (gensym 'denv))
+             (values `(def ,denv-name* (primcall __denvPush ,denv-name
+                                                 ,(flatten bindings) ...))
+                     denv-name*)])))
       
     (with-output-language (LexCst Expr)
       (define (emit-get denv-name name)
@@ -121,17 +125,21 @@
   
   (Expr : Expr (cst denv-name) -> Expr ()
     [(block (,n* ...) ,s* ... ,e)
-     (define denv-name* (gensym 'denv))
-     (define bindings (block-bindings n*))
-     `(block ,(emit-push denv-name* denv-name bindings)
-             ,(map (λ (stmt) (Stmt stmt denv-name*)) s*) ...
-             ,(Expr e denv-name*))]
+     (let*-values ([(bindings) (block-bindings n*)]
+                   [(push denv-name*) (emit-push denv-name bindings)]
+                   [(stmts) (map (λ (stmt) (Stmt stmt denv-name*)) s*)]
+                   [(expr) (Expr e denv-name*)])
+       (if push
+         `(block ,push ,stmts ... ,expr)
+         `(block ,stmts ... ,expr)))]
     [(fn (,x* ...) ,e)
-     (define denv-name* (gensym 'denv))
-     (define-values (bindings lex-params) (fn-bindings x*))
-     `(fn (,denv-name ,lex-params ...)
-        (block ,(emit-push denv-name* denv-name bindings)
-               ,(Expr e denv-name*)))]
+     (let*-values ([(bindings lex-params) (fn-bindings x*)]
+                   [(push denv-name*) (emit-push denv-name bindings)]
+                   [(body) (Expr e denv-name*)])
+       `(fn (,denv-name ,lex-params ...)
+          ,(if push
+             `(block ,push ,body)
+             body)))]
     [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
         
   (Stmt : Stmt (cst denv-name) -> Stmt ()
