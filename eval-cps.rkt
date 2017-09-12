@@ -18,34 +18,28 @@
   (provide empty push-args insert ref)
   (require "util.rkt")
 
-  (define (empty) '())
+  (define (empty) (hash))
 
   (define (push-args parent formals args)
-    (append (map cons formals args) parent))
+    (for/fold ([env parent])
+              ([formal formals]
+               [arg args])
+      (hash-set env formal arg)))
 
-  (define (insert parent name value)
-    (cons (cons name value) parent))
+  (define insert hash-set)
 
-  (define (ref env name)
-    (define binding (assq name env))
-    (if binding
-      (cdr binding)
-      (raise (exn:unbound (format "unbound variable ~a" name)
-                          (current-continuation-marks))))))
+  (define ref hash-ref))
 
 (module cont-env racket/base
   (provide inject ref)
   (require "util.rkt")
 
   (define (inject names conts)
-    (map cons names conts))
+    (for/hash ([name names]
+               [cont conts])
+      (values name cont)))
 
- (define (ref conts name)
-    (define binding (assq name conts))
-    (if binding
-      (cdr binding)
-      (raise (exn:unbound (format "unbound label ~a" name)
-                          (current-continuation-marks))))))
+  (define ref hash-ref))
 
 ;;;; Eval
 

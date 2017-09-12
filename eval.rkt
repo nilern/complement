@@ -28,25 +28,19 @@
 
   (struct $env (bindings parent) #:transparent)
 
-  (define (empty) ($env #f '()))
+  (define (empty) (hash))
 
   (define (push-fn parent bindings)
-    (match bindings
-      ['() parent]
-      [_ ($env bindings parent)]))
+    (for/fold ([env parent])
+              ([binding bindings])
+      (hash-set env (car binding) (cdr binding))))
 
   (define (push-block parent binders)
-    (match binders
-      ['() parent]
-      [_ ($env (map (λ (name) (cons name (box undefined)))
-                    binders)
-               parent)]))
+    (for/fold ([env parent])
+              ([binder binders])
+      (hash-set env binder (box undefined))))
 
-  (define (ref env name)
-    (match-define ($env bs p) env)
-    (match (assq name bs)
-      [#f (ref p name)]
-      [(cons _ value) value])))
+  (define ref hash-ref))
 
 ;;;; Continuations
 
@@ -110,7 +104,7 @@
                [cont* (cont:$block cont lenv* denv* stmts e)])
           (eval-stmt cont* lenv* denv* stmt))])]
     [(const ,c)       (continue cont c)]
-    [(lex ,n) (continue cont (env:ref lenv n))]
+    [(lex ,n) (continue cont (env:ref lenv n))] ; FIXME: unbox if box?
     [(dyn ,n) (continue cont (env:ref denv n))]))
 
 (define (eval-stmt cont lenv denv stmt)
