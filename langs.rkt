@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS)
+(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS parse-CPS)
 (require nanopass/base)
 
 (define (name? name)
@@ -79,10 +79,11 @@
     (const (c))
     (primop (p)))
 
-  (entry Expr)
+  (Program ()
+    (prog ([n* k*] ...) n))
 
   (Cont (k)
-    (cont n (n* ...) s* ... t))
+    (cont (n* ...) s* ... t))
 
   (Stmt (s)
     (def n e)
@@ -90,10 +91,11 @@
 
   (Transfer (t)
     (continue n a* ...)
-    (call a n a* ...))
+    (call a n a* ...)
+    (halt a))
   
   (Expr (e)
-    (fn k* ... n)
+    (fn ([n* k*] ...) n)
     (call a a* ...)
     (primcall p a* ...)
     a)
@@ -101,3 +103,5 @@
   (Atom (a)
     n
     (const c)))
+
+(define-parser parse-CPS CPS)

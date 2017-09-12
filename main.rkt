@@ -2,7 +2,7 @@
 
 (module+ main
   (require racket/pretty
-           "parse.rkt" "passes.rkt" "eval.rkt")
+           "parse.rkt" "passes.rkt" "eval.rkt" "eval-cps.rkt")
 
   (define input
     (open-input-string (vector-ref (current-command-line-arguments) 0)))
@@ -37,4 +37,8 @@
   (printf "\n===\n\n")
 
   (define cps (cps-convert lcst))
-  (pretty-print cps))
+  (pretty-print cps)
+
+  (printf "\n---\n\n")
+
+  (eval-CPS cps))
