@@ -82,6 +82,12 @@
         [('__boxSet (list loc val)) (set-box! loc val)]
         [('__boxGet (list loc)) (unbox loc)])))
 
+  (Program : Program (ir) -> * ()
+    [(prog ([,n* ,k*] ...) ,n)
+     (define env (env:empty))
+     (define kenv (kenv:inject n* k*))
+     (apply-label (kenv:ref kenv n) env kenv '())])
+
   (Stmt : Stmt (ir env kenv stmts transfer) -> * ()
     [(def ,n ,e) (Expr e env kenv n stmts transfer)]
     [,e (Expr e env kenv #f stmts transfer)])     
@@ -115,10 +121,4 @@
     [(call ,a ,n ,a* ...)
      (apply-fn (Atom a env) (cons (cont-ref env kenv n)
                                   (map (λ (arg) (Atom arg env)) a*)))]
-    [(halt ,a) (Atom a env)])
-
-  (nanopass-case (CPS Program) ir
-    [(prog ([,n* ,k*] ...) ,n)
-     (define env (env:empty))
-     (define kenv (kenv:inject n* k*))
-     (apply-label (kenv:ref kenv n) env kenv '())]))
+    [(halt ,a) (Atom a env)]))

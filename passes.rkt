@@ -1,7 +1,8 @@
 #lang racket
 
-(provide alphatize infer-decls lex-straighten introduce-dyn-env cps-convert)
-(require racket/hash nanopass/base
+(provide alphatize infer-decls lex-straighten introduce-dyn-env cps-convert
+         remove-nontail-calls)
+(require racket/hash data/gvector nanopass/base
          "langs.rkt")
 
 (define-pass alphatize : Cst (cst) -> Cst ()
@@ -310,3 +311,81 @@
              ,(cons (emit-cont '() (reverse stmts) transfer)
                     (reverse conts))] ...)
            ,entry)))
+
+(define-pass remove-nontail-calls : CPS (ir) -> TailCPS ()
+  (definitions
+    (with-output-language (TailCPS Stmt)
+      (define (emit-stmt! stmt-acc name-hint expr)
+        (gvector-add! stmt-acc (if name-hint `(def ,name-hint ,expr) expr))))
+      
+    (with-output-language (TailCPS Cont)
+      (define (emit-cont! label-acc cont-acc name params stmt-acc transfer)
+        (gvector-add! label-acc name)
+        (gvector-add! cont-acc `(cont (,params ...)
+                                      ,(gvector->list stmt-acc) ...
+                                      ,transfer))))
+    
+    (define (eval-block stmts transfer name params stmt-acc label-acc cont-acc)
+      (match stmts
+        [(cons stmt stmts*)
+         (Stmt stmt stmts* transfer name params stmt-acc label-acc cont-acc)]
+        ['() (Transfer transfer name params stmt-acc label-acc cont-acc)])))
+  
+  (Program : Program (ir) -> Program ()
+    [(prog ([,n* ,k*] ...) ,n)
+     (let ([label-acc (make-gvector)]
+           [cont-acc (make-gvector)])
+       (for ([label n*] [cont k*])
+         (Cont cont label label-acc cont-acc))
+       `(prog ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...)
+              ,n))])
+
+  (Cont : Cont (ir name label-acc cont-acc) -> * ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (define stmt-acc (make-gvector))
+     (eval-block s* t name n* stmt-acc label-acc cont-acc)])
+
+  (Stmt : Stmt (ir stmts transfer name params stmt-acc label-acc cont-acc)
+        -> * ()
+    [(def ,n ,e)
+     (Expr e n stmts transfer name params stmt-acc label-acc cont-acc)]
+    [,e (Expr e #f stmts transfer name params stmt-acc label-acc cont-acc)])
+
+  (Expr : Expr (ir name-hint stmts transfer name params stmt-acc
+                label-acc cont-acc) -> Expr ()
+    [,a
+     (emit-stmt! stmt-acc name-hint (Atom a))
+     (eval-block stmts transfer name params stmt-acc label-acc cont-acc)]
+    [(fn ([,n* ,k*] ...) ,n)
+     (define expr
+       (let ([label-acc (make-gvector)]
+             [cont-acc (make-gvector)])
+         (for ([label n*] [cont k*])
+           (Cont cont label label-acc cont-acc))
+         `(fn ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...) ,n)))
+     (emit-stmt! stmt-acc name-hint expr)
+     (eval-block stmts transfer name params stmt-acc label-acc cont-acc)]
+    [(primcall ,p ,[a*] ...)
+     (emit-stmt! stmt-acc name-hint `(primcall ,p ,a* ...))
+     (eval-block stmts transfer name params stmt-acc label-acc cont-acc)]
+    [(call ,[a] ,[a*] ...)
+     (define next-label (gensym 'k))
+     (with-output-language (TailCPS Transfer)
+       (emit-cont! label-acc cont-acc
+                   name params stmt-acc `(call ,a ,next-label ,a* ...)))
+     (let ([rv (if name-hint name-hint (gensym '_))]
+           [stmt-acc (make-gvector)])
+       (eval-block stmts transfer next-label (list rv) stmt-acc
+                   label-acc cont-acc))])
+
+  (Transfer : Transfer (ir name params stmt-acc label-acc cont-acc)
+            -> Transfer ()
+    [(continue ,n ,[a*] ...)
+     (emit-cont! label-acc cont-acc
+                 name params stmt-acc `(continue ,n ,a* ...))]
+    [(call ,[a] ,n ,[a*] ...)
+     (emit-cont! label-acc cont-acc name params stmt-acc `(call ,a ,n ,a* ...))]
+    [(halt ,[a])
+     (emit-cont! label-acc cont-acc name params stmt-acc `(halt ,a))])
+
+  (Atom : Atom (ir) -> Atom ()))

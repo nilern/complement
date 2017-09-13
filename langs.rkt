@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS parse-CPS)
+(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS TailCPS)
 (require nanopass/base)
 
 (define (name? name)
@@ -104,4 +104,8 @@
     n
     (const c)))
 
-(define-parser parse-CPS CPS)
+(define-language TailCPS
+  (extends CPS)
+
+  (Expr (e)
+    (- (call a a* ...))))

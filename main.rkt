@@ -41,4 +41,9 @@
 
   (printf "\n---\n\n")
 
-  (eval-CPS cps))
+  (eval-CPS cps)
+
+  (printf "\n===\n\n")
+
+  (define tcps (remove-nontail-calls cps))
+  (pretty-print tcps))
