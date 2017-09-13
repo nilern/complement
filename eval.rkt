@@ -10,15 +10,9 @@
 ;;;; Value
 
 (module value racket/base
-  (provide $fn unwrap)
-  (require racket/match)
+  (provide $fn)
   
-  (struct $fn (params body lenv))
-
-  (define unwrap
-    (match-lambda
-      [(box v) (unwrap v)]
-      [v v])))
+  (struct $fn (params body lenv)))
 
 ;;;; Environment
 
@@ -103,9 +97,13 @@
                [denv* (env:push-block denv dbs)]
                [cont* (cont:$block cont lenv* denv* stmts e)])
           (eval-stmt cont* lenv* denv* stmt))])]
-    [(const ,c)       (continue cont c)]
-    [(lex ,n) (continue cont (env:ref lenv n))] ; FIXME: unbox if box?
-    [(dyn ,n) (continue cont (env:ref denv n))]))
+    [(const ,c) (continue cont c)]
+    [,x (define-values (env name) (nanopass-case (Cst Var) x
+                                    [(lex ,n) (values lenv n)]
+                                    [(dyn ,n) (values denv n)]))
+        (continue cont (match (env:ref env name)
+                         [(box val) val]
+                         [val val]))]))
 
 (define (eval-stmt cont lenv denv stmt)
   (nanopass-case (Cst Stmt) stmt
@@ -146,7 +144,7 @@
 ;;;; Apply
 
 (define (apply cont denv f args)
-  (match-define (value:$fn params body lenv) (value:unwrap f))
+  (match-define (value:$fn params body lenv) f)
   (define-values (lbs dbs) (fn-binders params args))
   (let* ([lenv* (env:push-fn lenv lbs)]
          [denv* (env:push-fn denv dbs)])

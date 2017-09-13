@@ -56,6 +56,27 @@
 
 (define-pass lex-straighten : DeclCst (cst) -> DynDeclCst ()
   (definitions
+    (define (env:empty) (hash))
+
+    (define (env:push-fn parent binders)
+      (for/fold ([env parent])
+                ([binder binders])
+        (hash-set env binder 'plain)))
+
+    (define (env:push-block parent binders)
+      (for/fold ([env parent])
+                ([binder binders])
+        (hash-set env binder (box #f))))
+
+    (define env:ref hash-ref)
+
+    (define (lex-params decls)
+      (reverse (for/fold ([lex-decls '()])
+                         ([decl decls])
+                 (nanopass-case (DynDeclCst Var) decl
+                   [(lex ,n) (cons n lex-decls)]
+                   [(dyn ,n) lex-decls]))))
+    
     (define (partition-decls decls)
       (define-values (lex-decls dyn-decls)
         (for/fold ([lex-decls '()] [dyn-decls '()])
@@ -64,28 +85,49 @@
             [(lex ,n) (values (cons n lex-decls) dyn-decls)]
             [(dyn ,n) (values lex-decls (cons n dyn-decls))])))
       (values (reverse lex-decls) (reverse dyn-decls)))
-    
+
     (with-output-language (DynDeclCst Stmt)
-      (define (emit-init name)
-        `(def (lex ,name) (primcall __boxNew))))
+      (define (emit-init env name)
+        (match (env:ref env name)
+          [(or 'plain (box 'plain) (box #f)) #f]
+          [(box 'boxed) `(def (lex ,name) (primcall __boxNew))]))
+      (define (emit-set env name expr)
+        (match (env:ref env name)
+          [(or 'plain (box 'plain)) `(def (lex ,name) ,expr)]
+          [(and loc (box #f))
+           (set-box! loc 'plain)
+           `(def (lex ,name) ,expr)]
+          [(box 'boxed) `(primcall __boxSet (lex ,name) ,expr)])))
     (with-output-language (DynDeclCst Expr)
-      (define (emit-set name expr)
-        `(primcall __boxSet (lex ,name) ,expr))
-      (define (emit-get name)
-        `(primcall __boxGet (lex ,name)))))
+      (define (emit-get env name)
+        (match (env:ref env name)
+          [(or 'plain (box 'plain)) `(lex ,name)]
+          [(and loc (box status))
+           (unless status (set-box! loc 'boxed))
+           `(primcall __boxGet (lex ,name))]))))
   
- (Expr : Expr (cst) -> Expr ()
-    [(block (,x* ...) ,[s*] ... ,[e])
+  (Expr : Expr (cst env) -> Expr ()
+    [(fn (,[x*] ...) ,e)
+     (define lex-decls (lex-params x*))
+     (define env* (env:push-fn env lex-decls))
+     `(fn (,x* ...) ,(Expr e env*))]
+    [(block (,x* ...) ,s* ... ,e)
      (define-values (lex-decls dyn-decls) (partition-decls x*))
+     (define env* (env:push-block env lex-decls))
+     (define stmts (map (λ (stmt) (Stmt stmt env*)) s*))
+     (define expr (Expr e env*))
      `(block (,dyn-decls ...)
-             ,(append (map emit-init lex-decls) s*) ...
-             ,e)])
+             ,(append (filter identity
+                              (map (λ (ldecl) (emit-init env* ldecl))
+                                   lex-decls))
+                      stmts) ...
+             ,expr)]
+    [(lex ,n) (emit-get env n)])
 
-  (Stmt : Stmt (cst) -> Stmt ()
-    [(def (lex ,n) ,[e]) (emit-set n e)])
+  (Stmt : Stmt (cst env) -> Stmt ()
+    [(def (lex ,n) ,[e]) (emit-set env n e)])
 
-  (Var : Var (cst) -> Expr ()
-    [(lex ,n) (emit-get n)])) ; FIXME: should not emit __boxGet for fn params
+  (Expr cst (env:empty)))
 
 (define-pass introduce-dyn-env : DynDeclCst (cst) -> LexCst ()
   (definitions
