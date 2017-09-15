@@ -50,7 +50,8 @@
   (match-lambda
     [(cons ($fn-header params stmt) decls)
      (define body (extract-block (cons stmt decls)))
-     (with-output-language (Cst Expr) `(fn (,params ...) ,body))]
+     (with-output-language (Cst Expr)
+       `(fn ([(,params ...) (const #t) ,body])))]
     [(and stmts (cons _ _)) (extract-block stmts)]))
 
 (define (extract-block decls)

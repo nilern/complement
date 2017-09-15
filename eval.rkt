@@ -83,7 +83,7 @@
 
 (define (eval-expr cont lenv denv expr)
   (nanopass-case (Cst Expr) expr
-    [(fn (,x* ...) ,e)
+    [(fn ([(,x* ...) ,e? ,e]))
      (continue cont (value:$fn x* e lenv))]
     [(call ,e ,e* ...)
      (define cont* (cont:$fn cont lenv denv e*))

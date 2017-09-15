@@ -1,6 +1,8 @@
 #lang racket/base
 
-(provide name? const? primop? Cst DeclCst DynDeclCst LexCst CPS TailCPS)
+(provide name? const? primop?
+         Cst DeclCst DynDeclCst LexCst Ast
+         CPS TailCPS)
 (require nanopass/base)
 
 (define (name? name)
@@ -10,7 +12,7 @@
              (not (equal? (substring name-str 0 2) "__"))))))
 
 (define (const? v)
-  (or number? char? boolean? symbol?))
+  (or (number? v) (char? v) (boolean? v) (symbol? v)))
 
 (define (primop? name)
   (and (symbol? name)
@@ -26,7 +28,7 @@
   
   (Expr (e)
     (block s* ... e)
-    (fn (x* ...) e)
+    (fn ([(x* ...) e?* e*] ...))
     (call e e* ...)
     (primcall p e* ...)
     x
@@ -60,8 +62,8 @@
   (Expr (e)
     (- (block (n* ...) s* ... e))
     (+ (block s* ... e))
-    (- (fn (x* ...) e))
-    (+ (fn (n* ...) e))
+    (- (fn ([(x* ...) e?* e*] ...)))
+    (+ (fn ([(n* ...) e?* e*] ...)))
     (- x)
     (+ n))
 
@@ -72,6 +74,14 @@
   (Var (x)
     (- (lex n))
     (- (dyn n))))
+
+(define-language Ast
+  (extends LexCst)
+
+  (Expr (e)
+    (- (fn ([(n* ...) e?* e*] ...)))
+    (+ (fn n e))
+    (+ (if e? e1 e2))))
 
 (define-language CPS
   (terminals

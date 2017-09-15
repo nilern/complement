@@ -29,10 +29,11 @@
      (define env* (push-frame env (block-bindings s*)))
      `(block ,(map (λ (stmt) (Stmt stmt env*)) s*) ...
              ,(Expr e env*))]
-    [(fn (,x* ...) ,e)
+    [(fn ([(,x* ...), e? ,e]))
      (define env* (push-frame env (param-bindings x*)))
-     `(fn (,(map (λ (var) (Var var env*)) x*) ...)
-          ,(Expr e env*))])
+     `(fn ([(,(map (λ (var) (Var var env*)) x*) ...)
+            ,(Expr e? env*)
+            ,(Expr e env*)]))])
 
   (Stmt : Stmt (cst env) -> Stmt ())
     
@@ -108,10 +109,10 @@
            `(primcall __boxGet (lex ,name))]))))
   
   (Expr : Expr (cst env) -> Expr ()
-    [(fn (,[x*] ...) ,e)
+    [(fn ([(,[x*] ...) ,e? ,e]))
      (define lex-decls (lex-params x*))
      (define env* (env:push-fn env lex-decls))
-     `(fn (,x* ...) ,(Expr e env*))]
+     `(fn ([(,x* ...) ,(Expr e? env*) ,(Expr e env*)]))]
     [(block (,x* ...) ,s* ... ,e)
      (define-values (lex-decls dyn-decls) (partition-decls x*))
      (define env* (env:push-block env lex-decls))
@@ -175,14 +176,17 @@
        (if push
          `(block ,push ,stmts ... ,expr)
          `(block ,stmts ... ,expr)))]
-    [(fn (,x* ...) ,e)
+    [(fn ([(,x* ...) ,e? ,e]))
      (let*-values ([(bindings lex-params) (fn-bindings x*)]
                    [(push denv-name*) (emit-push denv-name bindings)]
+                   [(cond) (Expr e? denv-name*)]
                    [(body) (Expr e denv-name*)])
-       `(fn (,denv-name ,lex-params ...)
-          ,(if push
-             `(block ,push ,body)
-             body)))]
+       `(fn ([(,denv-name ,lex-params ...)
+              ,cond
+              ,(if push
+                 `(block ,push ,body)
+                 body)])))]
+    [(fn ([(,x** ...) ,e?* ,e*] ...)) (error "unimplemented")]
     [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
         
   (Stmt : Stmt (cst denv-name) -> Stmt ()
@@ -270,7 +274,7 @@
   
   (Expr : Expr (expr cont stmt-acc label-acc cont-acc)
         -> Transfer (stmt-acc* label-acc* cont-acc*)
-    [(fn (,n* ...) ,e)
+    [(fn ([(,n* ...) ,e? ,e]))
      (define f
        (let*-values (((entry) (gensym 'entry))
                      ((ret) (gensym 'ret))
