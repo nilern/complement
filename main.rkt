@@ -36,6 +36,11 @@
 
   (printf "\n===\n\n")
 
+  (define ast (add-dispatch lcst))
+  (pretty-print ast)
+
+  (printf "\n===\n\n")
+
   (define cps (cps-convert lcst))
   (pretty-print cps)
 

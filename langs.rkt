@@ -63,7 +63,7 @@
     (- (block (n* ...) s* ... e))
     (+ (block s* ... e))
     (- (fn ([(x* ...) e?* e*] ...)))
-    (+ (fn ([(n* ...) e?* e*] ...)))
+    (+ (fn n ([(n* ...) e?* e*] ...)))
     (- x)
     (+ n))
 
@@ -79,8 +79,8 @@
   (extends LexCst)
 
   (Expr (e)
-    (- (fn ([(n* ...) e?* e*] ...)))
-    (+ (fn n e))
+    (- (fn n ([(n* ...) e?* e*] ...)))
+    (+ (fn (n* ...) e))
     (+ (if e? e1 e2))))
 
 (define-language CPS

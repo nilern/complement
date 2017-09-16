@@ -1,9 +1,9 @@
 #lang racket
 
-(provide alphatize infer-decls lex-straighten introduce-dyn-env cps-convert
-         remove-nontail-calls)
-(require racket/hash data/gvector nanopass/base
-         "langs.rkt")
+(provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
+         cps-convert remove-nontail-calls)
+(require racket/hash data/gvector (only-in threading ~>>) nanopass/base
+         "util.rkt" "langs.rkt")
 
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions
@@ -179,9 +179,11 @@
     [(fn ([(,x* ...) ,e? ,e]))
      (let*-values ([(bindings lex-params) (fn-bindings x*)]
                    [(push denv-name*) (emit-push denv-name bindings)]
+                   [(denv-name*) (if push denv-name* (gensym 'denv))] ; HACK
                    [(cond) (Expr e? denv-name*)]
                    [(body) (Expr e denv-name*)])
-       `(fn ([(,denv-name ,lex-params ...)
+       `(fn ,denv-name*
+            ([(,lex-params ...)
               ,cond
               ,(if push
                  `(block ,push ,body)
@@ -201,6 +203,42 @@
   (let ([denv-name (gensym 'denv)])
     `(block ,(emit-init denv-name)
             ,(Expr cst denv-name))))
+
+(define-pass add-dispatch : LexCst (ir) -> Ast ()
+  (definitions
+    (with-output-language (Ast Expr)
+      (define (emit-cases argv cases)
+        (match cases
+          [(cons (list params cond body) cases*) ; TODO: Params
+           `(block ,(for/list ([(p i) (in-indexed params)])
+                      (with-output-language (Ast Stmt)
+                        `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
+                   ;; TODO: constant fold the branch (if possible) right away:
+                   (if ,cond ,body ,(emit-cases argv cases*)))]
+          ['() `(primcall __raise (const PreCondition))]))
+
+      (define (emit-arities argv argc arities)
+        (match arities
+          [(cons (cons arity cases) arities*)
+           `(if (primcall __iEq ,argc (const ,arity))
+              ,(emit-cases argv cases)
+              ,(emit-arities argv argc arities*))]
+          ['() `(primcall __raise (const Arity))]))))
+  
+  (Expr : Expr (ir) -> Expr ()
+    [(fn ,n ([(,n** ...) ,[e?*] ,[e*]] ...))
+     (let* ([argv (gensym 'argv)]
+            [argc (gensym 'argc)]
+            [arities (~>> (map list n** e?* e*)
+                          (clj-group-by (compose1 length car))
+                          hash->list
+                          (sort _ < #:key car))])
+       `(fn (,n ,argv)
+          (block
+            (def ,argc (primcall __tupleLength ,argv))
+            ,(emit-arities argv argc arities))))]
+    [(call ,[e1] ,[e2] ,[e*] ...)
+     `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))
 
 (define-pass cps-convert : LexCst (cst) -> CPS ()
   (definitions
@@ -274,7 +312,7 @@
   
   (Expr : Expr (expr cont stmt-acc label-acc cont-acc)
         -> Transfer (stmt-acc* label-acc* cont-acc*)
-    [(fn ([(,n* ...) ,e? ,e]))
+    [(fn ,n ([(,n* ...) ,e? ,e]))
      (define f
        (let*-values (((entry) (gensym 'entry))
                      ((ret) (gensym 'ret))
@@ -282,7 +320,7 @@
                       (Expr e ($cont:return ret) '() '() '())))
          (with-output-language (CPS Expr)
            `(fn ([,(cons entry (reverse labels))
-                  ,(cons (emit-cont (cons ret n*) (reverse stmts) transfer)
+                  ,(cons (emit-cont (cons ret (cons n n*)) (reverse stmts) transfer)
                          (reverse conts))] ...)
                 ,entry))))
      (continue cont f #f stmt-acc label-acc cont-acc)]
@@ -393,3 +431,5 @@
      (emit-cont! label-acc cont-acc name params stmt-acc `(halt ,a))])
 
   (Atom : Atom (ir) -> Atom ()))
+
+
