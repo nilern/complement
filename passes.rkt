@@ -3,7 +3,7 @@
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
          cps-convert remove-nontail-calls)
 (require racket/hash data/gvector (only-in threading ~>>) nanopass/base
-         "util.rkt" "langs.rkt")
+         (only-in "util.rkt" clj-group-by) "langs.rkt")
 
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions
@@ -209,7 +209,7 @@
     (with-output-language (Ast Expr)
       (define (emit-cases argv cases)
         (match cases
-          [(cons (list params cond body) cases*) ; TODO: Params
+          [(cons (list params cond body) cases*)
            `(block ,(for/list ([(p i) (in-indexed params)])
                       (with-output-language (Ast Stmt)
                         `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
