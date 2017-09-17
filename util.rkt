@@ -6,6 +6,9 @@
 (struct exn:unbound exn:fail ())
 
 (define (clj-group-by f coll)
-  (for/fold ([groups (hash)])
-            ([v coll])
-    (hash-update groups (f v) (curry cons v) '())))
+  (define groups
+    (for/fold ([groups (hash)])
+              ([v coll])
+      (hash-update groups (f v) (curry cons v) '())))
+  (for/hash ([(k v) groups])
+    (values k (reverse v))))

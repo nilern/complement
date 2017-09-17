@@ -17,7 +17,7 @@
   (EOF
    LBRACE RBRACE
    SEMICOLON
-   = =>))
+   = => \|))
 
 (define-lex-abbrevs
   (lower-letter (:/ "a" "z"))
@@ -33,26 +33,37 @@
     [";" 'SEMICOLON]
     ["=>" '=>]
     ["=" '=]
+    ["|" '\|]
     [(:: "$" (:+ (:or lower-letter upper-letter)))
      (token-DYN (string->symbol (substring lexeme 1)))]
     [(:+ (:or lower-letter upper-letter))
      (token-LEX (string->symbol lexeme))]
     [(:+ digit) (token-INT (string->number lexeme))]))
 
-(struct $fn-header (params body-start))
+(struct $fn-header (params cond body-start))
 (struct $def (var expr))
 
 (define (app->var-list app)
   (map (λ (expr) (nanopass-case (Cst Expr) expr [,x x]))
        app))
 
-(define parse-decls
-  (match-lambda
-    [(cons ($fn-header params stmt) decls)
-     (define body (extract-block (cons stmt decls)))
-     (with-output-language (Cst Expr)
-       `(fn ([(,params ...) (const #t) ,body])))]
-    [(and stmts (cons _ _)) (extract-block stmts)]))
+(define (parse-decls decls)
+  (if ($fn-header? (car decls))
+    (let loop ([decls decls]
+               [paramss '()]
+               [conds '()]
+               [bodies '()])
+      (match decls
+        [(cons ($fn-header params cond stmt) decls)
+         (let*-values ([(stmts decls) (splitf-at decls (negate $fn-header?))])
+           (loop decls
+                 (cons params paramss)
+                 (cons cond conds)
+                 (cons (extract-block (cons stmt stmts)) bodies)))]
+        ['() (with-output-language (Cst Expr)
+               `(fn ([(,(reverse paramss) ...) ,(reverse conds)
+                      ,(reverse bodies)] ...)))]))
+    (extract-block decls)))
 
 (define (extract-block decls)
   (define extract
@@ -88,7 +99,10 @@
         [(block-decl-list SEMICOLON block-decl) (cons $3 $1)])
 
       (block-decl
-        [(app => stmt) ($fn-header (app->var-list (reverse $1)) $3)]
+        [(app => stmt) ($fn-header (app->var-list (reverse $1))
+                                   (with-output-language (Cst Expr) `(const #t))
+                                   $3)]
+        [(app \| expr => stmt) ($fn-header (app->var-list (reverse $1)) $3 $5)]
         [(stmt) $1])
 
       (stmt

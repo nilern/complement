@@ -431,5 +431,3 @@
      (emit-cont! label-acc cont-acc name params stmt-acc `(halt ,a))])
 
   (Atom : Atom (ir) -> Atom ()))
-
-
