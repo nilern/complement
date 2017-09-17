@@ -28,7 +28,7 @@
   
   (Expr (e)
     (block s* ... e)
-    (fn ([(x* ...) e?* e*] ...))
+    (fn fc* ...)
     (call e e* ...)
     (primcall p e* ...)
     x
@@ -37,6 +37,9 @@
   (Stmt (s)
     (def x e)
     e)
+
+  (Case (fc)
+    (case (x* ...) e? e))
 
   (Var (x)
     (lex n)
@@ -62,14 +65,18 @@
   (Expr (e)
     (- (block (n* ...) s* ... e))
     (+ (block s* ... e))
-    (- (fn ([(x* ...) e?* e*] ...)))
-    (+ (fn n ([(n* ...) e?* e*] ...)))
+    (- (fn fc* ...))
+    (+ (fn n fc ...))
     (- x)
     (+ n))
 
   (Stmt (s)
     (- (def x e))
     (+ (def n e)))
+
+  (Case (fc)
+    (- (case (x* ...) e? e))
+    (+ (case (n* ...) e? e)))
 
   (Var (x)
     (- (lex n))
@@ -79,9 +86,12 @@
   (extends LexCst)
 
   (Expr (e)
-    (- (fn n ([(n* ...) e?* e*] ...)))
+    (- (fn n fc ...))
     (+ (fn (n* ...) e))
-    (+ (if e? e1 e2))))
+    (+ (if e? e1 e2)))
+
+  (Case (fc)
+    (- (case (n* ...) e? e))))
 
 (define-language CPS
   (terminals

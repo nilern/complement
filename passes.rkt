@@ -28,14 +28,15 @@
     [(block ,s* ... ,e)
      (define env* (push-frame env (block-bindings s*)))
      `(block ,(map (λ (stmt) (Stmt stmt env*)) s*) ...
-             ,(Expr e env*))]
-    [(fn ([(,x* ...), e? ,e]))
-     (define env* (push-frame env (param-bindings x*)))
-     `(fn ([(,(map (λ (var) (Var var env*)) x*) ...)
-            ,(Expr e? env*)
-            ,(Expr e env*)]))])
+             ,(Expr e env*))])
 
   (Stmt : Stmt (cst env) -> Stmt ())
+
+  (Case : Case (cst env) -> Case ()
+    [(case (,x* ...) ,e? ,e)
+     (define env* (push-frame env (param-bindings x*)))
+     `(case (,(map (λ (p) (Var p env*)) x*) ...) ,(Expr e? env*)
+        ,(Expr e env*))])
     
   (Var : Var (cst env) -> Var ()
     [(lex ,n) `(lex ,(hash-ref env n))])
@@ -109,10 +110,6 @@
            `(primcall __boxGet (lex ,name))]))))
   
   (Expr : Expr (cst env) -> Expr ()
-    [(fn ([(,[x*] ...) ,e? ,e]))
-     (define lex-decls (lex-params x*))
-     (define env* (env:push-fn env lex-decls))
-     `(fn ([(,x* ...) ,(Expr e? env*) ,(Expr e env*)]))]
     [(block (,x* ...) ,s* ... ,e)
      (define-values (lex-decls dyn-decls) (partition-decls x*))
      (define env* (env:push-block env lex-decls))
@@ -128,6 +125,12 @@
 
   (Stmt : Stmt (cst env) -> Stmt ()
     [(def (lex ,n) ,[e]) (emit-set env n e)])
+
+  (Case : Case (cst env) -> Case ()
+    [(case (,[x*] ...) ,e? ,e)
+     (define lex-decls (lex-params x*))
+     (define env* (env:push-fn env lex-decls))
+     `(case (,x* ...) ,(Expr e? env*) ,(Expr e env*))])
 
   (Expr cst (env:empty)))
 
@@ -176,25 +179,25 @@
        (if push
          `(block ,push ,stmts ... ,expr)
          `(block ,stmts ... ,expr)))]
-    [(fn ([(,x* ...) ,e? ,e]))
-     (let*-values ([(bindings lex-params) (fn-bindings x*)]
-                   [(push denv-name*) (emit-push denv-name bindings)]
-                   [(denv-name*) (if push denv-name* (gensym 'denv))] ; HACK
-                   [(cond) (Expr e? denv-name*)]
-                   [(body) (Expr e denv-name*)])
-       `(fn ,denv-name*
-            ([(,lex-params ...)
-              ,cond
-              ,(if push
-                 `(block ,push ,body)
-                 body)])))]
-    [(fn ([(,x** ...) ,e?* ,e*] ...)) (error "unimplemented")]
+    [(fn ,fc* ...)
+     (define denv-name (gensym 'denv))
+     `(fn ,denv-name ,(map (λ (case) (Case case denv-name)) fc*) ...)]
     [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
         
   (Stmt : Stmt (cst denv-name) -> Stmt ()
     [(def (lex ,n) ,[e]) `(def ,n ,e)]
     [(def (dyn ,n) ,[e]) (emit-set denv-name n e)]
     [else (Expr cst denv-name)])
+
+  (Case : Case (cst denv-name) -> Case ()
+    [(case (,x* ...) ,e? ,e)
+     (let*-values ([(bindings lex-params) (fn-bindings x*)]
+                   [(push denv-name) (emit-push denv-name bindings)])
+       `(case (,lex-params ...) ,(Expr e? denv-name)
+          ,(if push
+             (with-output-language (LexCst Expr)
+               `(block ,push ,(Expr e denv-name)))
+             (Expr e denv-name))))])
 
   (Var : Var (cst denv-name) -> Expr ()
     [(lex ,n) n]
@@ -226,7 +229,7 @@
           ['() `(primcall __raise (const Arity))]))))
   
   (Expr : Expr (ir) -> Expr ()
-    [(fn ,n ([(,n** ...) ,[e?*] ,[e*]] ...))
+    [(fn ,n (case (,n** ...) ,[e?*] ,[e*]) ...)
      (let* ([argv (gensym 'argv)]
             [argc (gensym 'argc)]
             [arities (~>> (map list n** e?* e*)
@@ -240,6 +243,7 @@
     [(call ,[e1] ,[e2] ,[e*] ...)
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))
 
+;; TODO: cps-convert : Ast (ast) -> CPS ()
 (define-pass cps-convert : LexCst (cst) -> CPS ()
   (definitions
     (struct $cont:fn (cont arges) #:transparent)
@@ -312,7 +316,7 @@
   
   (Expr : Expr (expr cont stmt-acc label-acc cont-acc)
         -> Transfer (stmt-acc* label-acc* cont-acc*)
-    [(fn ,n ([(,n* ...) ,e? ,e]))
+    [(fn ,n (case (,n* ...) ,e? ,e))
      (define f
        (let*-values (((entry) (gensym 'entry))
                      ((ret) (gensym 'ret))

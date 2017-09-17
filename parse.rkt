@@ -61,8 +61,8 @@
                  (cons cond conds)
                  (cons (extract-block (cons stmt stmts)) bodies)))]
         ['() (with-output-language (Cst Expr)
-               `(fn ([(,(reverse paramss) ...) ,(reverse conds)
-                      ,(reverse bodies)] ...)))]))
+               `(fn (case (,(reverse paramss) ...) ,(reverse conds)
+                      ,(reverse bodies)) ...))]))
     (extract-block decls)))
 
 (define (extract-block decls)
