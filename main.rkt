@@ -15,10 +15,9 @@
   (define acst (alphatize cst))
   (pretty-print acst)
 
-;; TODO:
-;  (printf "\n---\n\n")
-;  
-;  (eval-Cst acst)
+  (printf "\n---\n\n")
+  
+  (eval-Cst acst)
 
   (printf "\n===\n\n")
 
