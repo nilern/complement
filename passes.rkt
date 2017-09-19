@@ -244,7 +244,7 @@
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))
 
 ;; TODO: cps-convert : Ast (ast) -> CPS ()
-(define-pass cps-convert : LexCst (cst) -> CPS ()
+(define-pass cps-convert : LexCst (ir) -> CPS ()
   (definitions
     (struct $cont:fn (cont arges) #:transparent)
     (struct $cont:args (cont arges callee argas) #:transparent)
@@ -255,108 +255,108 @@
     (struct $cont:halt () #:transparent)
 
     (with-output-language (CPS Stmt)
-      (define (trivialize stmts name expr)
+      (define (trivialize! stmt-acc name expr)
         (nanopass-case (CPS Expr) expr
-          [,a (values a stmts)]
+          [,a a]
           [else (define name* (if name name (gensym 'v)))
-                (values name* (cons `(def ,name* ,expr) stmts))]))
+                (gvector-add! stmt-acc `(def ,name* ,expr))
+                name*]))
       
-      (define (emit-stmt stmts name expr)
-        (cons (if name `(def ,name ,expr) expr) stmts)))
+      (define (emit-stmt! stmt-acc name expr)
+        (gvector-add! stmt-acc (if name `(def ,name ,expr) expr))))
+    
     (with-output-language (CPS Cont)
-      (define (emit-cont formals stmts transfer)
-        `(cont (,formals ...) ,stmts ... ,transfer)))
+      (define (emit-cont! label-acc cont-acc label formals stmts transfer)
+        (gvector-add! label-acc label)
+        (gvector-add! cont-acc `(cont (,formals ...) ,stmts ... ,transfer))))
+    
     (with-output-language (CPS Transfer)
-      (define (emit-transfer label expr stmts labels conts)
+      (define (emit-transfer! stmt-acc label expr)
         (if label
           (nanopass-case (CPS Expr) expr
-            [,a (values `(continue ,label ,expr) stmts labels conts)]
-            [(call ,a ,a* ...)
-             (values `(call ,a ,label ,a* ...) stmts labels conts)]
+            [,a `(continue ,label ,expr)]
+            [(call ,a ,a* ...) `(call ,a ,label ,a* ...)]
             [else (define v (gensym 'v))
-                  (emit-transfer label v (emit-stmt stmts v expr) labels conts)])
+                  (emit-stmt! stmt-acc v expr)
+                  (emit-transfer! stmt-acc label v)])
           (nanopass-case (CPS Expr) expr
-            [,a (values `(halt ,a) stmts labels conts)]
+            [,a `(halt ,a)]
             [else (define v (gensym 'v))
-                  (emit-transfer label v (emit-stmt stmts v expr) labels conts)]))))
+                  (emit-stmt! stmt-acc v expr)
+                  (emit-transfer! stmt-acc label v)]))))
+    
     (with-output-language (CPS Expr)                  
       (define (continue cont expr expr-name stmt-acc label-acc cont-acc)
         (match cont
           [($cont:fn cont* '())
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
-           (continue cont* `(call ,aexpr) #f stmt-acc* label-acc cont-acc)]
+           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (continue cont* `(call ,aexpr) #f stmt-acc label-acc cont-acc)]
           [($cont:fn cont* (cons arge arges))
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
-           (Expr arge ($cont:args cont* arges aexpr '()) stmt-acc* label-acc cont-acc)]
+           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (Expr arge ($cont:args cont* arges aexpr '()) stmt-acc label-acc cont-acc)]
           [($cont:args cont* '() f argas)
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
+           (define aexpr (trivialize! stmt-acc expr-name expr))
            (continue cont* `(call ,f ,(reverse (cons aexpr argas)) ...) #f
-                     stmt-acc* label-acc cont-acc)]
+                     stmt-acc label-acc cont-acc)]
           [($cont:args cont* (cons arge arges) f argas)
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
+           (define aexpr (trivialize! stmt-acc expr-name expr))
            (Expr arge ($cont:args cont* arges f (cons aexpr argas))
-                 stmt-acc* label-acc cont-acc)]
+                 stmt-acc label-acc cont-acc)]
           [($cont:primargs cont* '() op argas)
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
+           (define aexpr (trivialize! stmt-acc expr-name expr))
            (continue cont* `(primcall ,op ,(reverse (cons aexpr argas)) ...) #f
-                     stmt-acc* label-acc cont-acc)]
+                     stmt-acc label-acc cont-acc)]
+          
           [($cont:primargs cont* (cons arge arges) op argas)
-           (define-values (aexpr stmt-acc*) (trivialize stmt-acc expr-name expr))
+           (define aexpr (trivialize! stmt-acc expr-name expr))
            (Expr arge ($cont:primargs cont* arges op (cons aexpr argas))
-                 stmt-acc* label-acc cont-acc)]
+                 stmt-acc label-acc cont-acc)]
           [($cont:block cont* '() e)
-           (Expr e cont* (emit-stmt stmt-acc expr-name expr) label-acc cont-acc)]
+           (emit-stmt! stmt-acc expr-name expr)
+           (Expr e cont* stmt-acc label-acc cont-acc)]
           [($cont:block cont* (cons stmt stmts) e)
-           (Stmt stmt ($cont:block cont* stmts e)
-                 (emit-stmt stmt-acc expr-name expr) label-acc cont-acc)]
+           (emit-stmt! stmt-acc expr-name expr)
+           (Stmt stmt ($cont:block cont* stmts e) stmt-acc label-acc cont-acc)]
           [($cont:def cont* name)
            (continue cont* expr name stmt-acc label-acc cont-acc)]
-          [($cont:return label) (emit-transfer label expr stmt-acc label-acc cont-acc)]
-          [($cont:halt) (emit-transfer #f expr stmt-acc label-acc cont-acc)]))))
+          [($cont:return label) (emit-transfer! stmt-acc label expr)]
+          [($cont:halt) (emit-transfer! stmt-acc #f expr)]))))
   
-  (Expr : Expr (expr cont stmt-acc label-acc cont-acc)
-        -> Transfer (stmt-acc* label-acc* cont-acc*)
+  (Expr : Expr (expr cont stmt-acc label-acc cont-acc) -> Expr ()
     [(fn ,n (case (,n* ...) ,e? ,e))
      (define f
-       (let*-values (((entry) (gensym 'entry))
-                     ((ret) (gensym 'ret))
-                     ((transfer stmts labels conts)
-                      (Expr e ($cont:return ret) '() '() '())))
-         (with-output-language (CPS Expr)
-           `(fn ([,(cons entry (reverse labels))
-                  ,(cons (emit-cont (cons ret (cons n n*)) (reverse stmts) transfer)
-                         (reverse conts))] ...)
-                ,entry))))
+       (let* ([entry (gensym 'entry)]
+              [ret (gensym 'ret)]
+              [stmt-acc (make-gvector)]
+              [label-acc (make-gvector)]
+              [cont-acc (make-gvector)]
+              [transfer (Expr e ($cont:return ret) stmt-acc label-acc cont-acc)])
+         (emit-cont! label-acc cont-acc
+                     entry (cons ret (cons n n*)) (gvector->list stmt-acc) transfer)
+         `(fn ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...) ,entry)))
      (continue cont f #f stmt-acc label-acc cont-acc)]
-    [(block ,s* ... ,e)
-     (match s*
-       ['() (Expr e cont stmt-acc label-acc cont-acc)]
-       [(cons stmt stmts)
-        (Stmt stmt ($cont:block cont stmts e) stmt-acc label-acc cont-acc)])]
+    [(block ,e) (Expr e cont stmt-acc label-acc cont-acc)]
+    [(block ,s ,s* ... ,e)
+     (Stmt s ($cont:block cont s* e) stmt-acc label-acc cont-acc)]
     [(call ,e ,e* ...)
      (Expr e ($cont:fn cont e*) stmt-acc label-acc cont-acc)]
-    [(primcall ,p ,e* ...)
-     (match e*
-       ['() (with-output-language (CPS Expr)
-              (continue cont `(primcall ,p) #f stmt-acc label-acc cont-acc))]
-       [(cons arge arges)
-        (Expr arge ($cont:primargs cont arges p '()) stmt-acc label-acc cont-acc)])]
+    [(primcall ,p) (continue cont `(primcall ,p) #f stmt-acc label-acc cont-acc)]
+    [(primcall ,p ,e ,e* ...)
+     (Expr e ($cont:primargs cont e* p '()) stmt-acc label-acc cont-acc)]
     [,n (continue cont n #f stmt-acc label-acc cont-acc)]
-    [(const ,c) (with-output-language (CPS Expr)
-                  (continue cont `(const ,c) #f stmt-acc label-acc cont-acc))])
+    [(const ,c) (continue cont `(const ,c) #f stmt-acc label-acc cont-acc)])
 
-  (Stmt : Stmt (stmt cont stmt-acc label-acc cont-acc)
-        -> Transfer (stmt-acc* label-acc* label-acc* cont-acc*)
+  (Stmt : Stmt (stmt cont stmt-acc label-acc cont-acc) -> Stmt ()
     [(def ,n ,e) (Expr e ($cont:def cont n) stmt-acc label-acc cont-acc)]
     [,e (Expr e cont stmt-acc label-acc cont-acc)])
 
-  (let*-values (((entry) (gensym 'main))
-                ((transfer stmts labels conts)
-                 (Expr cst ($cont:halt) '() '() '())))
-    `(prog ([,(cons entry (reverse labels))
-             ,(cons (emit-cont '() (reverse stmts) transfer)
-                    (reverse conts))] ...)
-           ,entry)))
+  (let* ([entry (gensym 'main)]
+         [stmt-acc (make-gvector)]
+         [label-acc (make-gvector)]
+         [cont-acc (make-gvector)]
+         [transfer (Expr ir ($cont:halt) stmt-acc label-acc cont-acc)])
+    (emit-cont! label-acc cont-acc entry '() (gvector->list stmt-acc) transfer)
+    `(prog ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...) ,entry)))
 
 (define-pass remove-nontail-calls : CPS (ir) -> TailCPS ()
   (definitions

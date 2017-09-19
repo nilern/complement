@@ -5,6 +5,8 @@
          CPS TailCPS)
 (require nanopass/base)
 
+;;; TODO: restrict (call e e* ...)
+
 (define (name? name)
   (and (symbol? name)
        (let ([name-str (symbol->string name)])
