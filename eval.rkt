@@ -78,6 +78,11 @@
           (define-values (plbs pdbs) (param-binders param arg))
           (values (append plbs lbs) (append pdbs dbs))))
       (values (reverse lbs) (reverse dbs)))
+
+    (define (lookup lenv denv var)
+      (nanopass-case (Cst Var) var
+        [(lex ,n) (env:ref lenv n)]
+        [(dyn ,n) (env:ref denv n)]))
     
     (define (continue cont value)
       (match cont
@@ -99,11 +104,8 @@
          (Stmt s (cont:$block cont* lenv denv s* e) lenv denv)]
     
         [(cont:$def cont* lenv denv var)
-         (set-box! (nanopass-case (Cst Var) var
-                     [(lex ,n) (env:ref lenv n)]
-                     [(dyn ,n) (env:ref denv n)])
-                   value)
-         (continue cont* value)]
+         (set-box! (lookup lenv denv var) value)
+         (continue cont* value)] ; arbitrary, won't be used
     
         [(cont:$halt) value]))
 
@@ -120,21 +122,16 @@
     [(call ,e ,e* ...)
      (define cont* (cont:$fn cont lenv denv e*))
      (Expr e cont* lenv denv)]
-    [(primcall ,p ,e* ...) (error "unimplemented")]
+    [(primcall ,p ,e* ...) (error "unimplemented")] ; TODO
+    [(block ,e) (Expr e cont lenv denv)]
     [(block ,s* ... ,e)
-     (match s*
-       ['() (Expr e cont lenv denv)]
-       [(cons stmt stmts)
-        (define-values (lbs dbs) (block-binders s*))
-        (let* ([lenv* (env:push-block lenv lbs)]
-               [denv* (env:push-block denv dbs)]
-               [cont* (cont:$block cont lenv* denv* stmts e)])
-          (Stmt stmt cont* lenv* denv*))])]
+     (let*-values ([(lbs dbs) (block-binders s*)]
+                   [(lenv*) (env:push-block lenv lbs)]
+                   [(denv*) (env:push-block denv dbs)]
+                   [(cont*) (cont:$block cont lenv* denv* (cdr s*) e)])
+       (Stmt (car s*) cont* lenv* denv*))]
     [(const ,c) (continue cont c)]
-    [,x (define-values (env name) (nanopass-case (Cst Var) x
-                                    [(lex ,n) (values lenv n)]
-                                    [(dyn ,n) (values denv n)]))
-        (continue cont (match (env:ref env name)
+    [,x (continue cont (match (lookup lenv denv x)
                          [(box val) val]
                          [val val]))])
 
