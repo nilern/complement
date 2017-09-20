@@ -28,7 +28,11 @@
 
   (define insert hash-set)
 
-  (define ref hash-ref))
+  (define (ref env name)
+    (if (hash-has-key? env name)
+      (hash-ref env name)
+      (raise (exn:unbound (symbol->string name)
+                          (current-continuation-marks))))))
 
 (module cont-env racket/base
   (provide inject ref)
@@ -39,7 +43,11 @@
                [cont conts])
       (values name cont)))
 
-  (define ref hash-ref))
+  (define (ref env name)
+    (if (hash-has-key? env name)
+      (hash-ref env name)
+      (raise (exn:unbound (symbol->string name)
+                          (current-continuation-marks))))))
 
 ;;;; Eval
 
@@ -77,7 +85,11 @@
     
     (define (primapply op args)
       (match* (op args)
+        [('__iEq (list a b)) (= a b)]
         [('__denvNew '()) (env:empty)]
+        [('__tupleNew _) (list->vector args)]
+        [('__tupleLength (list tuple)) (vector-length tuple)]
+        [('__tupleGet (list tuple index)) (vector-ref tuple index)]
         [('__boxNew '()) (box undefined)]
         [('__boxSet (list loc val)) (set-box! loc val)]
         [('__boxGet (list loc)) (unbox loc)])))
@@ -118,7 +130,9 @@
   (Transfer : Transfer (ir env kenv) -> * ()
     [(continue ,n ,a* ...)
      (apply-cont (cont-ref env kenv n) kenv (map (λ (arg) (Atom arg env)) a*))]
-    [(if ,a? ,n1 ,n2) (error "unimplemented")] ; TODO
+    [(if ,a? ,n1 ,n2)
+     (apply-cont (cont-ref env kenv (match (Atom a? env) [#t n1] [#f n2]))
+                 kenv '())]
     [(call ,a ,n ,a* ...)
      (apply-fn (Atom a env) (cons (cont-ref env kenv n)
                                   (map (λ (arg) (Atom arg env)) a*)))]
