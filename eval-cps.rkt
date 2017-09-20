@@ -118,6 +118,7 @@
   (Transfer : Transfer (ir env kenv) -> * ()
     [(continue ,n ,a* ...)
      (apply-cont (cont-ref env kenv n) kenv (map (λ (arg) (Atom arg env)) a*))]
+    [(if ,a? ,n1 ,n2) (error "unimplemented")] ; TODO
     [(call ,a ,n ,a* ...)
      (apply-fn (Atom a env) (cons (cont-ref env kenv n)
                                   (map (λ (arg) (Atom arg env)) a*)))]

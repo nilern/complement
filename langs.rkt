@@ -113,6 +113,7 @@
 
   (Transfer (t)
     (continue n a* ...)
+    (if a? n1 n2)
     (call a n a* ...)
     (halt a))
   

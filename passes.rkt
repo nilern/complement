@@ -243,9 +243,12 @@
     [(call ,[e1] ,[e2] ,[e*] ...)
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))
 
+;; TODO: __raise doesn't return so turning it into a Transfer (just like we did
+;;       with __halt) should compress the output of this somewhat
 (define-pass cps-convert : Ast (ir) -> CPS ()
   (definitions
     (struct $cont:fn (cont arges) #:transparent)
+    (struct $cont:if (cont then else) #:transparent)
     (struct $cont:args (cont arges callee argas) #:transparent)
     (struct $cont:primargs (cont arges op argas) #:transparent)
     (struct $cont:block (cont stmts expr) #:transparent)
@@ -266,23 +269,26 @@
           [else (define name* (if name name (gensym 'v)))
                 (emit-stmt! builder name* expr)
                 name*])))
+    
     (define (build-cont builder expr . labels)
-      (define transfer
-        (let retry-with-expr ([expr expr])
-          (nanopass-case (CPS Expr) expr
-            [,a (match labels
-                  [(list #f) `(halt ,a)]
-                  [(list label) `(continue ,label ,a)]
-                  [(list label1 label2) `(if ,a ,label1 ,label2)])]
-            [(call ,a ,a* ...)
-             (match labels
-               [(list label) `(call ,a ,label ,a* ...)]
-               [_ (retry-with-expr (trivialize! builder #f expr))])]
-            [else (retry-with-expr (trivialize! builder #f expr))])))
-      (values ($cont-builder-label builder)
-              `(cont (,($cont-builder-formals builder) ...)
-                     ,(gvector->list ($cont-builder-stmts builder)) ...
-                     ,transfer)))
+      (with-output-language (CPS Transfer)
+        (define transfer
+          (let retry-with-expr ([expr expr])
+            (nanopass-case (CPS Expr) expr
+              [,a (match labels
+                    [(list #f) `(halt ,a)]
+                    [(list label) `(continue ,label ,a)]
+                    [(list label1 label2) `(if ,a ,label1 ,label2)])]
+              [(call ,a ,a* ...)
+               (match labels
+                 [(list (and (? identity) label)) `(call ,a ,label ,a* ...)]
+                 [_ (retry-with-expr (trivialize! builder #f expr))])]
+              [else (retry-with-expr (trivialize! builder #f expr))]))))
+      (with-output-language (CPS Cont)
+        (values ($cont-builder-label builder)
+                `(cont (,($cont-builder-formals builder) ...)
+                       ,(gvector->list ($cont-builder-stmts builder)) ...
+                       ,transfer))))
 
     (struct $cfg-builder (entry labels conts))
     (define (make-cfg-builder entry)
@@ -291,8 +297,8 @@
       (gvector-add! ($cfg-builder-labels builder) label)
       (gvector-add! ($cfg-builder-conts builder) cont))
     (define (build-cfg builder)
-      (values ($cfg-builder-labels builder)
-              ($cfg-builder-conts builder)
+      (values (gvector->list ($cfg-builder-labels builder))
+              (gvector->list ($cfg-builder-conts builder))
               ($cfg-builder-entry builder)))
     
     (with-output-language (CPS Expr)
@@ -304,6 +310,24 @@
           [($cont:fn cont* (cons arge arges))
            (define aexpr (trivialize! cont-builder name-hint expr))
            (Expr arge ($cont:args cont* arges aexpr '()) cont-builder cfg-builder)]
+          [($cont:if cont* then-expr else-expr)
+           (define then-label (gensym 'k))
+           (define else-label (gensym 'k))
+           (let-values ([(label cont)
+                         (build-cont cont-builder expr then-label else-label)])
+             (emit-cont! cfg-builder label cont))
+           (define (emit-branches cont)
+              (Expr then-expr cont (make-cont-builder then-label '()) cfg-builder)
+              (Expr else-expr cont (make-cont-builder else-label '()) cfg-builder))
+           (match cont*
+             [(or ($cont:return _) ($cont:halt))
+              (emit-branches cont*)]
+             [_
+              (define join (gensym 'k))
+              (emit-branches ($cont:return join))
+              (define join-param (gensym 'v))
+              (define join-builder (make-cont-builder join (list join-param)))
+              (continue cont* join-param #f join-builder cfg-builder)])]
           [($cont:args cont* '() f argas)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (continue cont* `(call ,f ,(reverse (cons aexpr argas)) ...) #f
@@ -346,6 +370,7 @@
          (define-values (labels conts entry) (build-cfg cfg-builder))
          `(fn ([,labels ,conts] ...) ,entry)))
      (continue cont f #f cont-builder cfg-builder)]
+    [(if ,e? ,e1 ,e2) (Expr e? ($cont:if cont e1 e2) cont-builder cfg-builder)]
     [(block ,e) (Expr e cont cont-builder cfg-builder)]
     [(block ,s ,s* ... ,e)
      (Stmt s ($cont:block cont s* e) cont-builder cfg-builder)]
