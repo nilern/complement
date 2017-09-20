@@ -11,7 +11,7 @@
 (provide parse)
 
 (define-tokens payload-toks
-  (LEX DYN
+  (LEX DYN PRIMOP
    INT))
 (define-empty-tokens empty-toks
   (EOF
@@ -34,6 +34,8 @@
     ["=>" '=>]
     ["=" '=]
     ["|" '\|]
+    [(:: "__" (:+ (:or lower-letter upper-letter)))
+     (token-PRIMOP (string->symbol lexeme))]
     [(:: "$" (:+ (:or lower-letter upper-letter)))
      (token-DYN (string->symbol (substring lexeme 1)))]
     [(:+ (:or lower-letter upper-letter))
@@ -113,11 +115,17 @@
         [(app) (match (reverse $1)
                  [(list expr) expr]
                  [(cons f args) (with-output-language (Cst Expr)
-                                  `(call ,f ,args ...))])])
+                                  `(call ,f ,args ...))])]
+        [(primapp) $1])
 
       (app
         [(simple) (list $1)]
         [(app simple) (cons $2 $1)])
+
+      (primapp
+        [(PRIMOP) (with-output-language (Cst Expr) `(primcall ,$1))]
+        [(PRIMOP app) (with-output-language (Cst Expr)
+                        `(primcall ,$1 ,(reverse $2) ...))])
 
       (simple
         [(LBRACE block RBRACE) $2]
