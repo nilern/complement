@@ -41,7 +41,7 @@
 
   (printf "\n===\n\n")
 
-  (define cps (cps-convert lcst))
+  (define cps (cps-convert ast))
   (pretty-print cps)
 
   (printf "\n---\n\n")

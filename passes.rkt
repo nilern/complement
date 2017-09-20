@@ -1,7 +1,7 @@
 #lang racket
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
-         cps-convert remove-nontail-calls)
+         cps-convert remove-nontail-calls) ; TODO: merge these
 (require racket/hash data/gvector (only-in threading ~>>) nanopass/base
          (only-in "util.rkt" clj-group-by) "langs.rkt")
 
@@ -243,8 +243,7 @@
     [(call ,[e1] ,[e2] ,[e*] ...)
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))
 
-;; TODO: cps-convert : Ast (ast) -> CPS ()
-(define-pass cps-convert : LexCst (ir) -> CPS ()
+(define-pass cps-convert : Ast (ir) -> CPS ()
   (definitions
     (struct $cont:fn (cont arges) #:transparent)
     (struct $cont:args (cont arges callee argas) #:transparent)
@@ -254,109 +253,119 @@
     (struct $cont:return (name) #:transparent)
     (struct $cont:halt () #:transparent)
 
+    (struct $cont-builder (label formals stmts))
+    (define (make-cont-builder label formals)
+      ($cont-builder label formals (make-gvector)))
     (with-output-language (CPS Stmt)
-      (define (trivialize! stmt-acc name expr)
+      (define (emit-stmt! builder name expr)
+        (gvector-add! ($cont-builder-stmts builder)
+                      (if name `(def ,name ,expr) expr)))
+      (define (trivialize! builder name expr)
         (nanopass-case (CPS Expr) expr
           [,a a]
           [else (define name* (if name name (gensym 'v)))
-                (gvector-add! stmt-acc `(def ,name* ,expr))
-                name*]))
-      
-      (define (emit-stmt! stmt-acc name expr)
-        (gvector-add! stmt-acc (if name `(def ,name ,expr) expr))))
-    
-    (with-output-language (CPS Cont)
-      (define (emit-cont! label-acc cont-acc label formals stmts transfer)
-        (gvector-add! label-acc label)
-        (gvector-add! cont-acc `(cont (,formals ...) ,stmts ... ,transfer))))
-    
-    (with-output-language (CPS Transfer)
-      (define (emit-transfer! stmt-acc label expr)
-        (if label
+                (emit-stmt! builder name* expr)
+                name*])))
+    (define (build-cont builder expr . labels)
+      (define transfer
+        (let retry-with-expr ([expr expr])
           (nanopass-case (CPS Expr) expr
-            [,a `(continue ,label ,expr)]
-            [(call ,a ,a* ...) `(call ,a ,label ,a* ...)]
-            [else (define v (gensym 'v))
-                  (emit-stmt! stmt-acc v expr)
-                  (emit-transfer! stmt-acc label v)])
-          (nanopass-case (CPS Expr) expr
-            [,a `(halt ,a)]
-            [else (define v (gensym 'v))
-                  (emit-stmt! stmt-acc v expr)
-                  (emit-transfer! stmt-acc label v)]))))
+            [,a (match labels
+                  [(list #f) `(halt ,a)]
+                  [(list label) `(continue ,label ,a)]
+                  [(list label1 label2) `(if ,a ,label1 ,label2)])]
+            [(call ,a ,a* ...)
+             (match labels
+               [(list label) `(call ,a ,label ,a* ...)]
+               [_ (retry-with-expr (trivialize! builder #f expr))])]
+            [else (retry-with-expr (trivialize! builder #f expr))])))
+      (values ($cont-builder-label builder)
+              `(cont (,($cont-builder-formals builder) ...)
+                     ,(gvector->list ($cont-builder-stmts builder)) ...
+                     ,transfer)))
+
+    (struct $cfg-builder (entry labels conts))
+    (define (make-cfg-builder entry)
+      ($cfg-builder entry (make-gvector) (make-gvector)))
+    (define (emit-cont! builder label cont)
+      (gvector-add! ($cfg-builder-labels builder) label)
+      (gvector-add! ($cfg-builder-conts builder) cont))
+    (define (build-cfg builder)
+      (values ($cfg-builder-labels builder)
+              ($cfg-builder-conts builder)
+              ($cfg-builder-entry builder)))
     
-    (with-output-language (CPS Expr)                  
-      (define (continue cont expr expr-name stmt-acc label-acc cont-acc)
+    (with-output-language (CPS Expr)
+      (define (continue cont expr name-hint cont-builder cfg-builder)
         (match cont
           [($cont:fn cont* '())
-           (define aexpr (trivialize! stmt-acc expr-name expr))
-           (continue cont* `(call ,aexpr) #f stmt-acc label-acc cont-acc)]
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (continue cont* `(call ,aexpr) #f cont-builder cfg-builder)]
           [($cont:fn cont* (cons arge arges))
-           (define aexpr (trivialize! stmt-acc expr-name expr))
-           (Expr arge ($cont:args cont* arges aexpr '()) stmt-acc label-acc cont-acc)]
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (Expr arge ($cont:args cont* arges aexpr '()) cont-builder cfg-builder)]
           [($cont:args cont* '() f argas)
-           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (define aexpr (trivialize! cont-builder name-hint expr))
            (continue cont* `(call ,f ,(reverse (cons aexpr argas)) ...) #f
-                     stmt-acc label-acc cont-acc)]
+                     cont-builder cfg-builder)]
           [($cont:args cont* (cons arge arges) f argas)
-           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (define aexpr (trivialize! cont-builder name-hint expr))
            (Expr arge ($cont:args cont* arges f (cons aexpr argas))
-                 stmt-acc label-acc cont-acc)]
+                 cont-builder cfg-builder)]
           [($cont:primargs cont* '() op argas)
-           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (define aexpr (trivialize! cont-builder name-hint expr))
            (continue cont* `(primcall ,op ,(reverse (cons aexpr argas)) ...) #f
-                     stmt-acc label-acc cont-acc)]
-          
+                     cont-builder cfg-builder)]
           [($cont:primargs cont* (cons arge arges) op argas)
-           (define aexpr (trivialize! stmt-acc expr-name expr))
+           (define aexpr (trivialize! cont-builder name-hint expr))
            (Expr arge ($cont:primargs cont* arges op (cons aexpr argas))
-                 stmt-acc label-acc cont-acc)]
+                 cont-builder cfg-builder)]
           [($cont:block cont* '() e)
-           (emit-stmt! stmt-acc expr-name expr)
-           (Expr e cont* stmt-acc label-acc cont-acc)]
+           (emit-stmt! cont-builder name-hint expr)
+           (Expr e cont* cont-builder cfg-builder)]
           [($cont:block cont* (cons stmt stmts) e)
-           (emit-stmt! stmt-acc expr-name expr)
-           (Stmt stmt ($cont:block cont* stmts e) stmt-acc label-acc cont-acc)]
+           (emit-stmt! cont-builder name-hint expr)
+           (Stmt stmt ($cont:block cont* stmts e) cont-builder cfg-builder)]
           [($cont:def cont* name)
-           (continue cont* expr name stmt-acc label-acc cont-acc)]
-          [($cont:return label) (emit-transfer! stmt-acc label expr)]
-          [($cont:halt) (emit-transfer! stmt-acc #f expr)]))))
+           (continue cont* expr name cont-builder cfg-builder)]
+          [($cont:return ret)
+           (define-values (label cont) (build-cont cont-builder expr ret))
+           (emit-cont! cfg-builder label cont)]
+          [($cont:halt)
+           (define-values (label cont) (build-cont cont-builder expr #f))
+           (emit-cont! cfg-builder label cont)]))))
   
-  (Expr : Expr (expr cont stmt-acc label-acc cont-acc) -> Expr ()
-    [(fn ,n (case (,n* ...) ,e? ,e))
+  (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
+    [(fn (,n* ...) ,e)
      (define f
        (let* ([entry (gensym 'entry)]
               [ret (gensym 'ret)]
-              [stmt-acc (make-gvector)]
-              [label-acc (make-gvector)]
-              [cont-acc (make-gvector)]
-              [transfer (Expr e ($cont:return ret) stmt-acc label-acc cont-acc)])
-         (emit-cont! label-acc cont-acc
-                     entry (cons ret (cons n n*)) (gvector->list stmt-acc) transfer)
-         `(fn ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...) ,entry)))
-     (continue cont f #f stmt-acc label-acc cont-acc)]
-    [(block ,e) (Expr e cont stmt-acc label-acc cont-acc)]
+              [cont-builder (make-cont-builder entry (cons ret n*))]
+              [cfg-builder (make-cfg-builder entry)]
+              [transfer (Expr e ($cont:return ret) cont-builder cfg-builder)])
+         (define-values (labels conts entry) (build-cfg cfg-builder))
+         `(fn ([,labels ,conts] ...) ,entry)))
+     (continue cont f #f cont-builder cfg-builder)]
+    [(block ,e) (Expr e cont cont-builder cfg-builder)]
     [(block ,s ,s* ... ,e)
-     (Stmt s ($cont:block cont s* e) stmt-acc label-acc cont-acc)]
-    [(call ,e ,e* ...)
-     (Expr e ($cont:fn cont e*) stmt-acc label-acc cont-acc)]
-    [(primcall ,p) (continue cont `(primcall ,p) #f stmt-acc label-acc cont-acc)]
+     (Stmt s ($cont:block cont s* e) cont-builder cfg-builder)]
+    [(call ,e ,e* ...) (Expr e ($cont:fn cont e*) cont-builder cfg-builder)]
+    [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
     [(primcall ,p ,e ,e* ...)
-     (Expr e ($cont:primargs cont e* p '()) stmt-acc label-acc cont-acc)]
-    [,n (continue cont n #f stmt-acc label-acc cont-acc)]
-    [(const ,c) (continue cont `(const ,c) #f stmt-acc label-acc cont-acc)])
+     (Expr e ($cont:primargs cont e* p '()) cont-builder cfg-builder)]
+    [,n (continue cont n #f cont-builder cfg-builder)]
+    [(const ,c) (continue cont `(const ,c) #f cont-builder cfg-builder)])
 
-  (Stmt : Stmt (stmt cont stmt-acc label-acc cont-acc) -> Stmt ()
-    [(def ,n ,e) (Expr e ($cont:def cont n) stmt-acc label-acc cont-acc)]
-    [,e (Expr e cont stmt-acc label-acc cont-acc)])
+  (Stmt : Stmt (stmt cont cont-builder cfg-builder) -> Stmt ()
+    [(def ,n ,e) (Expr e ($cont:def cont n) cont-builder cfg-builder)]
+    [,e (Expr e cont cont-builder cfg-builder)])
 
   (let* ([entry (gensym 'main)]
-         [stmt-acc (make-gvector)]
-         [label-acc (make-gvector)]
-         [cont-acc (make-gvector)]
-         [transfer (Expr ir ($cont:halt) stmt-acc label-acc cont-acc)])
-    (emit-cont! label-acc cont-acc entry '() (gvector->list stmt-acc) transfer)
-    `(prog ([,(gvector->list label-acc) ,(gvector->list cont-acc)] ...) ,entry)))
+         [cont-builder (make-cont-builder entry '())]
+         [cfg-builder (make-cfg-builder entry)]
+         [transfer (Expr ir ($cont:halt) cont-builder cfg-builder)])
+    (define-values (labels conts entry) (build-cfg cfg-builder))
+    `(prog ([,labels ,conts] ...) ,entry)))
 
 (define-pass remove-nontail-calls : CPS (ir) -> TailCPS ()
   (definitions
