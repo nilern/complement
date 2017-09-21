@@ -13,7 +13,7 @@
         (nanopass-case (Cst Var) param
           [(lex ,n) (hash-set env n (gensym n))]
           [else env])))
-    
+
     (define (block-bindings stmts)
       (for/fold ([env (hash)])
                 ([stmt stmts])
@@ -23,7 +23,7 @@
 
     (define (push-frame env bindings)
       (hash-union env bindings #:combine (λ (_ v) v))))
-  
+
   (Expr : Expr (cst env) -> Expr ()
     [(block ,s* ... ,e)
      (define env* (push-frame env (block-bindings s*)))
@@ -37,7 +37,7 @@
      (define env* (push-frame env (param-bindings x*)))
      `(case (,(map (λ (p) (Var p env*)) x*) ...) ,(Expr e? env*)
         ,(Expr e env*))])
-    
+
   (Var : Var (cst env) -> Var ()
     [(lex ,n) `(lex ,(hash-ref env n))])
 
@@ -53,7 +53,7 @@
             [(def (dyn ,n) ,e) (list `(dyn ,n))]
             [,e '()])))
       (append-map stmt-binders stmts)))
-  
+
   (Expr : Expr (cst) -> Expr ()
     [(block ,[s*] ... ,[e]) `(block (,(binders s*) ...) ,s* ... ,e)]))
 
@@ -79,7 +79,7 @@
                  (nanopass-case (DynDeclCst Var) decl
                    [(lex ,n) (cons n lex-decls)]
                    [(dyn ,n) lex-decls]))))
-    
+
     (define (partition-decls decls)
       (define-values (lex-decls dyn-decls)
         (for/fold ([lex-decls '()] [dyn-decls '()])
@@ -108,7 +108,7 @@
           [(and loc (box status))
            (unless status (set-box! loc 'boxed))
            `(primcall __boxGet (lex ,name))]))))
-  
+
   (Expr : Expr (cst env) -> Expr ()
     [(block (,x* ...) ,s* ... ,e)
      (define-values (lex-decls dyn-decls) (partition-decls x*))
@@ -152,7 +152,7 @@
                (values (cons (list `(const ,n) n*) bindings)
                        (cons n* lex-params))])))
         (values (reverse bindings) (reverse lex-params))))
-    
+
     (with-output-language (LexCst Stmt)
       (define (emit-init denv-name)
         `(def ,denv-name (primcall __denvNew)))
@@ -163,13 +163,13 @@
              (values `(def ,denv-name* (primcall __denvPush ,denv-name
                                                  ,(flatten bindings) ...))
                      denv-name*)])))
-      
+
     (with-output-language (LexCst Expr)
       (define (emit-get denv-name name)
         `(primcall __denvGet ,denv-name (const ,name)))
       (define (emit-set denv-name name expr)
         `(primcall __boxSet ,(emit-get denv-name name) ,expr))))
-  
+
   (Expr : Expr (cst denv-name) -> Expr ()
     [(block (,n* ...) ,s* ... ,e)
      (let*-values ([(bindings) (block-bindings n*)]
@@ -183,7 +183,7 @@
      (define denv-name (gensym 'denv))
      `(fn ,denv-name ,(map (λ (case) (Case case denv-name)) fc*) ...)]
     [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
-        
+
   (Stmt : Stmt (cst denv-name) -> Stmt ()
     [(def (lex ,n) ,[e]) `(def ,n ,e)]
     [(def (dyn ,n) ,[e]) (emit-set denv-name n e)]
@@ -227,7 +227,7 @@
               ,(emit-cases argv cases)
               ,(emit-arities argv argc arities*))]
           ['() `(primcall __raise (const Arity))]))))
-  
+
   (Expr : Expr (ir) -> Expr ()
     [(fn ,n (case (,n** ...) ,[e?*] ,[e*]) ...)
      (let* ([argv (gensym 'argv)]
@@ -257,43 +257,44 @@
     (struct $cont:halt () #:transparent)
 
     (struct $cfg-builder (entry labels conts))
-    
+
     (define (make-cfg-builder entry)
       ($cfg-builder entry (make-gvector) (make-gvector)))
-    
+
     (define (emit-cont! builder label cont)
       (gvector-add! ($cfg-builder-labels builder) label)
       (gvector-add! ($cfg-builder-conts builder) cont))
-    
+
     (define (build-cfg builder)
       (values (gvector->list ($cfg-builder-labels builder))
               (gvector->list ($cfg-builder-conts builder))
               ($cfg-builder-entry builder)))
 
     (struct $cont-builder (label formals stmts))
-    
+
     (define (make-cont-builder label formals)
       ($cont-builder label formals (make-gvector)))
-    
-    (with-output-language (CPS Stmt)
+
       (define (emit-stmt! builder name expr)
-        (gvector-add! ($cont-builder-stmts builder)
-                      (if name `(def ,name ,expr) expr)))
-      
-      (define (trivialize! builder name expr)
-        (nanopass-case (CPS Expr) expr
-          [,a a]
-          [else (define name* (if name name (gensym 'v)))
-                (emit-stmt! builder name* expr)
-                name*])))
-    
+        (with-output-language (CPS Stmt)
+          (gvector-add! ($cont-builder-stmts builder)
+                        (if name `(def ,name ,expr) expr))))
+
+    (define (trivialize! builder name expr)
+      (nanopass-case (CPS Expr) expr
+        [,a a]
+        [else (define name* (if name name (gensym 'v)))
+              (emit-stmt! builder name* expr)
+              (with-output-language (CPS Var) `(lex ,name*))]))
+
     (define (trivialize-cont! cont cfg-builder)
       (define (trivialize! param continue)
-        (define label (gensym 'k))
-        (define cont-builder (make-cont-builder label (list param)))
-        (continue cont-builder)
-        label)
-      
+        (with-output-language (CPS Transfer)
+          (define label (gensym 'k))
+          (define cont-builder (make-cont-builder label (list param)))
+          (continue cont-builder)
+          (with-output-language (CPS Var) `(label ,label))))
+
       (match cont
         [($cont:return ret) ret]
         [($cont:def cont param)
@@ -309,7 +310,8 @@
          (define param (gensym 'v))
          (trivialize! param
                       (λ (cont-builder)
-                        (continue cont param #f cont-builder cfg-builder)))]))
+                        (with-output-language (CPS Var)
+                          (continue cont `(lex ,param) #f cont-builder cfg-builder))))]))
 
     (define (build-cont/transfer cont-builder transfer)
       (with-output-language (CPS Cont)
@@ -330,7 +332,7 @@
     (define (build-cont/call cont-builder f label args)
       (with-output-language (CPS Transfer)
         (build-cont/transfer cont-builder `(call ,f ,label ,args ...))))
-    
+
     (with-output-language (CPS Expr)
       (define (continue cont expr name-hint cont-builder cfg-builder)
         (match cont
@@ -346,8 +348,8 @@
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define then-label (gensym 'k))
            (define else-label (gensym 'k))
-           (let-values ([(label cont)
-                         (build-cont/atom cont-builder aexpr then-label else-label)])
+           (let-values ([(label cont) (build-cont/atom cont-builder aexpr `(label ,then-label)
+                                                                          `(label ,else-label))])
              (emit-cont! cfg-builder label cont))
            (define join ($cont:return (trivialize-cont! cont* cfg-builder)))
            (Expr then-expr join (make-cont-builder then-label '()) cfg-builder)
@@ -386,7 +388,7 @@
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define-values (label cont) (build-cont/atom cont-builder aexpr))
            (emit-cont! cfg-builder label cont)]))))
-  
+
   (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
     [(fn (,n* ...) ,e)
      (define f
@@ -394,7 +396,7 @@
               [ret (gensym 'ret)]
               [cont-builder (make-cont-builder entry (cons ret n*))]
               [cfg-builder (make-cfg-builder entry)]
-              [transfer (Expr e ($cont:return ret) cont-builder cfg-builder)])
+              [transfer (Expr e ($cont:return `(lex ,ret)) cont-builder cfg-builder)])
          (define-values (labels conts entry) (build-cfg cfg-builder))
          `(fn ([,labels ,conts] ...) ,entry)))
      (continue cont f #f cont-builder cfg-builder)]
@@ -406,7 +408,7 @@
     [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
     [(primcall ,p ,e ,e* ...)
      (Expr e ($cont:primargs cont e* p '()) cont-builder cfg-builder)]
-    [,n (continue cont n #f cont-builder cfg-builder)]
+    [,n (continue cont `(lex ,n) #f cont-builder cfg-builder)]
     [(const ,c) (continue cont `(const ,c) #f cont-builder cfg-builder)])
 
   (Stmt : Stmt (stmt cont cont-builder cfg-builder) -> Stmt ()

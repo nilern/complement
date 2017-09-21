@@ -26,7 +26,7 @@
     (name (n))
     (const (c))
     (primop (p)))
-  
+
   (Expr (e)
     (block s* ... e)
     (fn fc* ...)
@@ -111,16 +111,20 @@
     e)
 
   (Transfer (t)
-    (continue n a* ...)
-    (if a? n1 n2)
-    (call a n a* ...)
+    (continue x a* ...)
+    (if a? x1 x2)
+    (call a x a* ...)
     (halt a))
-  
+
   (Expr (e)
     (fn ([n* k*] ...) n)
     (primcall p a* ...)
     a)
 
   (Atom (a)
-    n
-    (const c)))
+    x
+    (const c))
+
+  (Var (x)
+    (lex n)
+    (label n)))

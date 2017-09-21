@@ -31,7 +31,7 @@
   (define (ref env name)
     (if (hash-has-key? env name)
       (hash-ref env name)
-      (raise (exn:unbound (symbol->string name)
+      (raise (exn:unbound (format "unbound variable ~s" name)
                           (current-continuation-marks))))))
 
 (module cont-env racket/base
@@ -46,7 +46,7 @@
   (define (ref env name)
     (if (hash-has-key? env name)
       (hash-ref env name)
-      (raise (exn:unbound (symbol->string name)
+      (raise (exn:unbound (format "unbound variable ~s" name)
                           (current-continuation-marks))))))
 
 ;;;; Eval
@@ -58,16 +58,11 @@
 ;; TODO: dominator scoping rule
 (define-pass eval-CPS : CPS (ir) -> * ()
   (definitions
-    (define (cont-ref env kenv name)
-      (with-handlers ([exn:unbound?
-                       (lambda (_) (value:$cont (kenv:ref kenv name) env))])
-        (env:ref env name)))
-
     (define (eval-block stmts transfer env kenv)
       (match stmts
         [(cons stmt stmts*) (Stmt stmt env kenv stmts* transfer)]
         ['() (Transfer transfer env kenv)]))
-    
+
     (define (apply-label k env kenv args)
       (nanopass-case (CPS Cont) k
         [(cont (,n* ...) ,s* ... ,t)
@@ -82,7 +77,7 @@
       (match-let* ([(value:$fn labels conts entry env) f]
                    [kenv (kenv:inject labels conts)])
         (apply-label (kenv:ref kenv entry) env kenv args)))
-    
+
     (define (primapply op args)
       (match* (op args)
         [('__iEq (list a b)) (= a b)]
@@ -102,11 +97,11 @@
 
   (Stmt : Stmt (ir env kenv stmts transfer) -> * ()
     [(def ,n ,e) (Expr e env kenv n stmts transfer)]
-    [,e (Expr e env kenv #f stmts transfer)])     
+    [,e (Expr e env kenv #f stmts transfer)])
 
   (Expr : Expr (ir env kenv name stmts transfer) -> * ()
     [,a
-     (define res (Atom a env))
+     (define res (Atom a env kenv))
      (define env* (if name (env:insert env name res) env))
      (eval-block stmts transfer env* kenv)]
     [(fn ([,n* ,k*] ...) ,n)
@@ -114,21 +109,24 @@
      (define env* (if name (env:insert env name f) env))
      (eval-block stmts transfer env* kenv)]
     [(primcall ,p ,a* ...)
-     (define res (primapply p (map (λ (arg) (Atom arg env)) a*)))
+     (define res (primapply p (map (λ (arg) (Atom arg env kenv)) a*)))
      (define env* (if name (env:insert env name res) env))
      (eval-block stmts transfer env* kenv)])
 
-  (Atom : Atom (ir env) -> * ()
-    [(const ,c) c]
-    [,n (env:ref env n)])
-
   (Transfer : Transfer (ir env kenv) -> * ()
-    [(continue ,n ,a* ...)
-     (apply-cont (cont-ref env kenv n) kenv (map (λ (arg) (Atom arg env)) a*))]
-    [(if ,a? ,n1 ,n2)
-     (apply-cont (cont-ref env kenv (match (Atom a? env) [#t n1] [#f n2]))
-                 kenv '())]
-    [(call ,a ,n ,a* ...)
-     (apply-fn (Atom a env) (cons (cont-ref env kenv n)
-                                  (map (λ (arg) (Atom arg env)) a*)))]
-    [(halt ,a) (Atom a env)]))
+    [(continue ,x ,a* ...)
+     (apply-cont (Var x env kenv) kenv (map (λ (arg) (Atom arg env kenv)) a*))]
+    [(if ,a? ,x1 ,x2)
+     (apply-cont (Var (match (Atom a? env kenv) [#t x1] [#f x2]) env kenv) kenv '())]
+    [(call ,a ,x ,a* ...)
+     (apply-fn (Atom a env kenv) (cons (Var x env kenv)
+                                       (map (λ (arg) (Atom arg env kenv)) a*)))]
+    [(halt ,a) (Atom a env kenv)])
+
+   (Atom : Atom (ir env kenv) -> * ()
+     [(const ,c) c]
+     [,x (Var x env kenv)])
+
+  (Var : Var (ir env kenv) -> * ()
+    [(lex ,n) (env:ref env n)]
+    [(label ,n) (value:$cont (kenv:ref kenv n) env)]))
