@@ -110,7 +110,7 @@
       (stmt
         [(var = expr) ($def $1 $3)]
         [(expr) $1])
-     
+
       (expr
         [(app) (match (reverse $1)
                  [(list expr) expr]

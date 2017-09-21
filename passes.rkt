@@ -2,7 +2,8 @@
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
          cps-convert)
-(require racket/hash data/gvector (only-in threading ~>>) nanopass/base
+(require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~>>)
+         nanopass/base
          (only-in "util.rkt" clj-group-by) "langs.rkt")
 
 (define-pass alphatize : Cst (cst) -> Cst ()
@@ -27,16 +28,14 @@
   (Expr : Expr (cst env) -> Expr ()
     [(block ,s* ... ,e)
      (define env* (push-frame env (block-bindings s*)))
-     `(block ,(map (λ (stmt) (Stmt stmt env*)) s*) ...
-             ,(Expr e env*))])
+     `(block ,(map (cute Stmt <> env*) s*) ... ,(Expr e env*))])
 
   (Stmt : Stmt (cst env) -> Stmt ())
 
   (Case : Case (cst env) -> Case ()
     [(case (,x* ...) ,e? ,e)
      (define env* (push-frame env (param-bindings x*)))
-     `(case (,(map (λ (p) (Var p env*)) x*) ...) ,(Expr e? env*)
-        ,(Expr e env*))])
+     `(case (,(map (cute Var <> env*) x*) ...) ,(Expr e? env*) ,(Expr e env*))])
 
   (Var : Var (cst env) -> Var ()
     [(lex ,n) `(lex ,(hash-ref env n))])
@@ -113,12 +112,10 @@
     [(block (,x* ...) ,s* ... ,e)
      (define-values (lex-decls dyn-decls) (partition-decls x*))
      (define env* (env:push-block env lex-decls))
-     (define stmts (map (λ (stmt) (Stmt stmt env*)) s*))
+     (define stmts (map (cute Stmt <> env*) s*))
      (define expr (Expr e env*))
      `(block (,dyn-decls ...)
-             ,(append (filter identity
-                              (map (λ (ldecl) (emit-init env* ldecl))
-                                   lex-decls))
+             ,(append (filter identity (map (cute emit-init env* <>) lex-decls))
                       stmts) ...
              ,expr)]
     [(lex ,n) (emit-get env n)])
@@ -160,8 +157,7 @@
         (match bindings
           ['() (values #f denv-name)]
           [_ (define denv-name* (gensym 'denv))
-             (values `(def ,denv-name* (primcall __denvPush ,denv-name
-                                                 ,(flatten bindings) ...))
+             (values `(def ,denv-name* (primcall __denvPush ,denv-name ,(flatten bindings) ...))
                      denv-name*)])))
 
     (with-output-language (LexCst Expr)
@@ -174,14 +170,14 @@
     [(block (,n* ...) ,s* ... ,e)
      (let*-values ([(bindings) (block-bindings n*)]
                    [(push denv-name*) (emit-push denv-name bindings)]
-                   [(stmts) (map (λ (stmt) (Stmt stmt denv-name*)) s*)]
+                   [(stmts) (map (cute Stmt <> denv-name*) s*)]
                    [(expr) (Expr e denv-name*)])
        (if push
          `(block ,push ,stmts ... ,expr)
          `(block ,stmts ... ,expr)))]
     [(fn ,fc* ...)
      (define denv-name (gensym 'denv))
-     `(fn ,denv-name ,(map (λ (case) (Case case denv-name)) fc*) ...)]
+     `(fn ,denv-name ,(map (cute Case <> denv-name) fc*) ...)]
     [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
 
   (Stmt : Stmt (cst denv-name) -> Stmt ()
@@ -204,8 +200,7 @@
     [(dyn ,n) (emit-get denv-name n)])
 
   (let ([denv-name (gensym 'denv)])
-    `(block ,(emit-init denv-name)
-            ,(Expr cst denv-name))))
+    `(block ,(emit-init denv-name) ,(Expr cst denv-name))))
 
 (define-pass add-dispatch : LexCst (ir) -> Ast ()
   (definitions
@@ -301,17 +296,14 @@
          (trivialize!
           param
           (match cont
-            [($cont:block cont* '() expr)
-             (λ (cont-builder) (Expr expr cont* cont-builder cfg-builder))]
+            [($cont:block cont* '() expr) (cute Expr expr cont* <> cfg-builder)]
             [($cont:block cont* (cons stmt stmts) e)
              (define cont** ($cont:block cont* stmts e))
-             (λ (cont-builder) (Stmt stmt cont** cont-builder cfg-builder))]))]
+             (cute Stmt stmt cont** <> cfg-builder)]))]
         [_
-         (define param (gensym 'v))
-         (trivialize! param
-                      (λ (cont-builder)
-                        (with-output-language (CPS Var)
-                          (continue cont `(lex ,param) #f cont-builder cfg-builder))))]))
+         (with-output-language (CPS Var)
+           (define param (gensym 'v))
+           (trivialize! param (cute continue cont `(lex ,param) #f <> cfg-builder)))]))
 
     (define (build-cont/transfer cont-builder transfer)
       (with-output-language (CPS Cont)

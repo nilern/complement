@@ -1,7 +1,8 @@
 #lang racket/base
 
 (provide eval-CPS)
-(require racket/match racket/undefined nanopass/base
+(require racket/match racket/undefined (only-in srfi/26 cute)
+         nanopass/base
          "util.rkt" "langs.rkt")
 
 ;;;; Values
@@ -109,18 +110,17 @@
      (define env* (if name (env:insert env name f) env))
      (eval-block stmts transfer env* kenv)]
     [(primcall ,p ,a* ...)
-     (define res (primapply p (map (λ (arg) (Atom arg env kenv)) a*)))
+     (define res (primapply p (map (cute Atom <> env kenv) a*)))
      (define env* (if name (env:insert env name res) env))
      (eval-block stmts transfer env* kenv)])
 
   (Transfer : Transfer (ir env kenv) -> * ()
     [(continue ,x ,a* ...)
-     (apply-cont (Var x env kenv) kenv (map (λ (arg) (Atom arg env kenv)) a*))]
+     (apply-cont (Var x env kenv) kenv (map (cute Atom <> env kenv) a*))]
     [(if ,a? ,x1 ,x2)
      (apply-cont (Var (match (Atom a? env kenv) [#t x1] [#f x2]) env kenv) kenv '())]
     [(call ,a ,x ,a* ...)
-     (apply-fn (Atom a env kenv) (cons (Var x env kenv)
-                                       (map (λ (arg) (Atom arg env kenv)) a*)))]
+     (apply-fn (Atom a env kenv) (cons (Var x env kenv) (map (cute Atom <> env kenv) a*)))]
     [(halt ,a) (Atom a env kenv)])
 
    (Atom : Atom (ir env kenv) -> * ()

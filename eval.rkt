@@ -2,7 +2,7 @@
 
 (provide eval-Cst)
 
-(require racket/undefined racket/match (only-in racket/function curry)
+(require racket/undefined racket/match (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt")
 
@@ -10,7 +10,7 @@
 
 (module value racket/base
   (provide $fn)
-  
+
   (struct $fn (cases lenv)))
 
 ;;;; Continuations
@@ -86,7 +86,7 @@
       (nanopass-case (Cst Var) var
         [(lex ,n) (env:ref lenv n)]
         [(dyn ,n) (env:ref denv n)]))
-    
+
     (define (continue cont value)
       (match cont
         [(cont:$fn cont* lenv denv (cons arge arges))
@@ -94,7 +94,7 @@
          (Expr arge cont** lenv denv)]
         [(cont:$fn cont* _ denv '())
          (apply cont* denv value '())]
-        
+
         [(cont:$args cont* lenv denv (cons arge arges) f argvs)
          (define cont** (cont:$args cont* lenv denv arges f (cons value argvs)))
          (Expr arge cont** lenv denv)]
@@ -116,20 +116,20 @@
          (Expr e cont* lenv denv)]
         [(cont:$block cont* lenv denv (cons s s*) e)
          (Stmt s (cont:$block cont* lenv denv s* e) lenv denv)]
-    
+
         [(cont:$def cont* lenv denv var)
          (set-box! (lookup lenv denv var) value)
          (continue cont* value)] ; `value` is arbitrary here, it won't be used
-    
+
         [(cont:$halt) value]))
 
     (define (apply cont denv f args)
       (define (accepts? argc case)
         (nanopass-case (Cst Case) case
           [(case (,x* ...) ,e? ,e) (= (length x*) argc)]))
-      
+
       (match-define (value:$fn cases lenv) f)
-      (match (filter (curry accepts? (length args)) cases)
+      (match (filter (cute accepts? (length args) <>) cases)
         [(cons case cases)
          (nanopass-case (Cst Case) case
            [(case (,x* ...) ,e? ,e)
@@ -140,7 +140,7 @@
                           [(cont*) (cont:$precond cont lenv* denv* e f* args)])
               (Expr e? cont* lenv* denv*))])]
         ['() (error "argc")]))
-    
+
     (define (primapply op args)
       (match* (op args)
         [('__iEq (list a b)) (= a b)]
