@@ -1,8 +1,7 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast
-         CPS TailCPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -119,16 +118,9 @@
   
   (Expr (e)
     (fn ([n* k*] ...) n)
-    (call a a* ...)
     (primcall p a* ...)
     a)
 
   (Atom (a)
     n
     (const c)))
-
-(define-language TailCPS
-  (extends CPS)
-
-  (Expr (e)
-    (- (call a a* ...))))

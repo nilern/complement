@@ -116,12 +116,7 @@
     [(primcall ,p ,a* ...)
      (define res (primapply p (map (λ (arg) (Atom arg env)) a*)))
      (define env* (if name (env:insert env name res) env))
-     (eval-block stmts transfer env* kenv)]
-    [(call ,a ,a* ...)
-     (with-output-language (CPS Cont)
-       (define code `(cont (,(if name name (gensym '_))) ,stmts ... ,transfer))
-       (define cont (value:$cont code env))
-       (apply-fn (Atom a env) (cons cont (map (λ (arg) (Atom arg env)) a*))))])
+     (eval-block stmts transfer env* kenv)])
 
   (Atom : Atom (ir env) -> * ()
     [(const ,c) c]
