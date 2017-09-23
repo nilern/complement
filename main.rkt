@@ -16,7 +16,7 @@
   (pretty-print acst)
 
   (printf "\n---\n\n")
-  
+
   (eval-Cst acst)
 
   (printf "\n===\n\n")
@@ -46,4 +46,9 @@
 
   (printf "\n---\n\n")
 
-  (eval-CPS cps))
+  (eval-CPS cps)
+
+  (printf "\n===\n\n")
+
+  (define stats (analyze-closures cps))
+  (pretty-print stats))

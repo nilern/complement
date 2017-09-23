@@ -9,6 +9,6 @@
   (define groups
     (for/fold ([groups (hash)])
               ([v coll])
-      (hash-update groups (f v) (cute cons <>) '())))
+      (hash-update groups (f v) (cute cons v <>) '())))
   (for/hash ([(k v) groups])
     (values k (reverse v))))

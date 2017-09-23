@@ -113,7 +113,7 @@
   (Transfer (t)
     (continue x a* ...)
     (if a? x1 x2)
-    (call a x a* ...)
+    (call x1 x2 a* ...)
     (halt a))
 
   (Expr (e)

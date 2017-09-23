@@ -1,8 +1,8 @@
 #lang racket
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
-         cps-convert)
-(require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~>>)
+         cps-convert analyze-closures)
+(require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          (only-in "util.rkt" clj-group-by) "langs.rkt")
 
@@ -413,3 +413,129 @@
          [transfer (Expr ir ($cont:halt) cont-builder cfg-builder)])
     (define-values (labels conts entry) (build-cfg cfg-builder))
     `(prog ([,labels ,conts] ...) ,entry)))
+
+(module closure-stats racket/base
+  (provide make-builder visited? visit! clover-used! called! escapes! transitively! build)
+  (require racket/match racket/set (only-in srfi/26 cute))
+
+  (struct $stat (calls escapes freevars) #:transparent)
+
+  (struct $stat-builder ([visited? #:mutable]
+                         [calls #:mutable]
+                         [escapes #:mutable]
+                         [freevars #:mutable])
+                        #:transparent)
+
+  (define make-builder make-hash)
+
+  (define (visited? stats label)
+    (and (hash-has-key? stats label)
+         ($stat-builder-visited? (hash-ref stats label))))
+
+  (define (visit! stats label)
+    (set-$stat-builder-visited?! (ref! stats label) #t))
+
+  (define (ref! stats label)
+    (hash-ref! stats label (λ () ($stat-builder #f 0 0 (mutable-set)))))
+
+  (define (clover-used! stats label name)
+    (set-add! ($stat-builder-freevars (ref! stats label)) name))
+
+  (define (called! stats label)
+    (define stat (ref! stats label))
+    (set-$stat-builder-calls! stat (+ ($stat-builder-calls stat) 1)))
+
+  (define (escapes! stats label)
+    (define stat (ref! stats label))
+    (set-$stat-builder-escapes! stat (+ ($stat-builder-escapes stat) 1)))
+
+  (define (transitively! stats in-label env label)
+    (define freevars ($stat-builder-freevars (ref! stats in-label)))
+    (for ([name ($stat-builder-freevars (ref! stats label))]
+          #:when (not (set-member? env name)))
+      (set-add! freevars name)))
+
+  (define (build builder)
+    (for/hash ([(k v) builder])
+      (match-define ($stat-builder _ calls escapes freevars) v)
+      (values k ($stat calls escapes (for/set ([fv freevars]) fv))))))
+
+(module cont-env racket/base ;; FIXME: this is copy-pasted from eval-CPS
+  (provide inject ref)
+  (require "util.rkt")
+
+  (define (inject names conts)
+    (for/hash ([name names]
+               [cont conts])
+      (values name cont)))
+
+  (define (ref env name)
+    (if (hash-has-key? env name)
+      (hash-ref env name)
+      (raise (exn:unbound (format "unbound variable ~s" name)
+                          (current-continuation-marks))))))
+
+(require (prefix-in cstats: (submod "." closure-stats))
+         (prefix-in kenv: (submod "." cont-env)))
+
+(define-pass analyze-closures : CPS (ir) -> * ()
+  (Program : Program (ir stats) -> * ()
+    [(prog ([,n* ,k*] ...) ,n)
+     (define kenv (kenv:inject n* k*))
+     (cstats:escapes! stats n)
+     (Cont (kenv:ref kenv n) n kenv stats)])
+
+  (Cont : Cont (ir label kenv stats) -> * ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (unless (cstats:visited? stats label)
+       (cstats:visit! stats label)
+       (~> (list->set n*)
+           (foldl (cute Stmt <> label <> kenv stats) _ s*)
+           (Transfer t label _ kenv stats)))])
+
+  (Stmt : Stmt (ir label env kenv stats) -> * ()
+    [(def ,n ,e)
+     (Expr e label env kenv stats)
+     (set-add env n)]
+    [,e (Expr e label env kenv stats)])
+
+  (Transfer : Transfer (ir label env kenv stats) -> * ()
+    [(continue ,x ,a* ...)
+     (Var x #t label env kenv stats)
+     (for ([aexpr a*])
+       (Atom aexpr label env kenv stats))]
+    [(if ,a? ,x1 ,x2)
+     (Atom a? label env kenv stats)
+     (Var x1 #t label env kenv stats)
+     (Var x2 #t label env kenv stats)]
+    [(call ,x1 ,x2 ,a* ...)
+     (Var x1 #t label env kenv stats)
+     (Var x2 #f label env kenv stats)
+     (for ([aexpr a*])
+       (Atom aexpr label env kenv stats))]
+    [(halt ,a) (Atom a label env kenv stats)])
+
+  (Expr : Expr (ir label env kenv stats) -> * ()
+    [(fn ([,n* ,k*] ...) ,n)
+     (define kenv (kenv:inject n* k*))
+     (cstats:escapes! stats n)
+     (Cont (kenv:ref kenv n) n kenv stats)]
+    [(primcall ,p ,a* ...)
+     (for ([aexpr a*])
+       (Atom aexpr label env kenv stats))]
+    [,a (Atom a label env kenv stats)])
+
+  (Atom : Atom (ir label env kenv stats) -> * ()
+    [,x (Var x #f label env kenv stats)]
+    [(const ,c) (void)])
+
+  (Var : Var (ir call? label env kenv stats) -> * ()
+    [(lex ,n) (unless (set-member? env n) (cstats:clover-used! stats label n))]
+    [(label ,n)
+     ((if call? cstats:called! cstats:escapes!) stats n)
+     (Cont (kenv:ref kenv n) n kenv stats)
+     (cstats:transitively! stats label env n)])
+
+  (let ([stats (cstats:make-builder)])
+    (Program ir stats)
+    (cstats:build stats)))
