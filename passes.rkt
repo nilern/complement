@@ -519,7 +519,8 @@
     [(fn ([,n* ,k*] ...) ,n)
      (define kenv (kenv:inject n* k*))
      (cstats:escapes! stats n)
-     (Cont (kenv:ref kenv n) n kenv stats)]
+     (Cont (kenv:ref kenv n) n kenv stats)
+     (cstats:transitively! stats label env n)]
     [(primcall ,p ,a* ...)
      (for ([aexpr a*])
        (Atom aexpr label env kenv stats))]
