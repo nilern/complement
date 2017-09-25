@@ -51,4 +51,9 @@
   (printf "\n===\n\n")
 
   (define stats (analyze-closures cps))
-  (pretty-print stats))
+  (pretty-print stats)
+
+  (printf "\n---\n\n")
+
+  (define cpcps (closure-convert cps stats))
+  (pretty-print cpcps))

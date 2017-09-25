@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -128,3 +128,23 @@
   (Var (x)
     (lex n)
     (label n)))
+
+(define-language CPCPS
+  (extends CPS)
+
+  (Program ()
+    (- (prog ([n* k*] ...) n))
+    (+ (prog ([n1* f*] ...) ([n2* k*] ...) n)))
+
+  (Fn (f)
+    (+ (fn ([n* k*] ...) n)))
+
+  (Transfer (t)
+    (- (continue x a* ...))
+    (- (if a? x1 x2))
+    (- (call x1 x2 a* ...))
+    (+ (goto x a* ...))
+    (+ (if a? (x1 a1* ...) (x2 a2* ...))))
+
+  (Expr (e)
+    (- (fn ([n* k*] ...) n))))

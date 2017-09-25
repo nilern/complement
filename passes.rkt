@@ -1,7 +1,7 @@
 #lang racket
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
-         cps-convert analyze-closures)
+         cps-convert analyze-closures closure-convert)
 (require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          (only-in "util.rkt" clj-group-by) "langs.rkt")
@@ -414,51 +414,35 @@
     (define-values (labels conts entry) (build-cfg cfg-builder))
     `(prog ([,labels ,conts] ...) ,entry)))
 
-(module closure-stats racket/base
-  (provide make-builder visited? visit! clover-used! called! escapes! transitively! build)
-  (require racket/match racket/set (only-in srfi/26 cute))
+(module label-table racket/base
+  (provide new call! escape! use-clover! transitively!)
+  (require racket/set (only-in srfi/26 cute) (only-in threading ~>))
 
-  (struct $stat (calls escapes freevars) #:transparent)
+  (define (new) (make-hash))
 
-  (struct $stat-builder ([visited? #:mutable]
-                         [calls #:mutable]
-                         [escapes #:mutable]
-                         [freevars #:mutable])
-                        #:transparent)
+  (define ref! (cute hash-ref! <> <> make-hash))
 
-  (define make-builder make-hash)
+  (define (freevars! table label)
+    (~> (ref! table label)
+        (hash-ref! 'freevars mutable-set)))
 
-  (define (visited? stats label)
-    (and (hash-has-key? stats label)
-         ($stat-builder-visited? (hash-ref stats label))))
+  (define (call! table label)
+    (~> (ref! table label)
+        (hash-set! 'called? #t)))
 
-  (define (visit! stats label)
-    (set-$stat-builder-visited?! (ref! stats label) #t))
+  (define (escape! table label)
+    (~> (ref! table label)
+        (hash-set! 'escapes? #t)))
 
-  (define (ref! stats label)
-    (hash-ref! stats label (λ () ($stat-builder #f 0 0 (mutable-set)))))
+  (define (use-clover! table label name)
+    (~> (freevars! table label)
+        (set-add! name)))
 
-  (define (clover-used! stats label name)
-    (set-add! ($stat-builder-freevars (ref! stats label)) name))
-
-  (define (called! stats label)
-    (define stat (ref! stats label))
-    (set-$stat-builder-calls! stat (+ ($stat-builder-calls stat) 1)))
-
-  (define (escapes! stats label)
-    (define stat (ref! stats label))
-    (set-$stat-builder-escapes! stat (+ ($stat-builder-escapes stat) 1)))
-
-  (define (transitively! stats in-label env label)
-    (define freevars ($stat-builder-freevars (ref! stats in-label)))
-    (for ([name ($stat-builder-freevars (ref! stats label))]
-          #:when (not (set-member? env name)))
-      (set-add! freevars name)))
-
-  (define (build builder)
-    (for/hash ([(k v) builder])
-      (match-define ($stat-builder _ calls escapes freevars) v)
-      (values k ($stat calls escapes (for/set ([fv freevars]) fv))))))
+  (define (transitively! table label env src-label)
+    (define freevars (freevars! table label))
+    (for ([fv (freevars! table src-label)]
+          #:when (not (set-member? env fv)))
+      (set-add! freevars fv))))
 
 (module cont-env racket/base ;; FIXME: this is copy-pasted from eval-CPS
   (provide inject ref)
@@ -475,68 +459,206 @@
       (raise (exn:unbound (format "unbound variable ~s" name)
                           (current-continuation-marks))))))
 
-(require (prefix-in cstats: (submod "." closure-stats))
+(require (prefix-in ltab: (submod "." label-table))
          (prefix-in kenv: (submod "." cont-env)))
 
 (define-pass analyze-closures : CPS (ir) -> * ()
-  (Program : Program (ir stats) -> * ()
+  (Program : Program (ir stats visited) -> * ()
     [(prog ([,n* ,k*] ...) ,n)
      (define kenv (kenv:inject n* k*))
-     (cstats:escapes! stats n)
-     (Cont (kenv:ref kenv n) n kenv stats)])
+     (ltab:escape! stats n)
+     (Cont (kenv:ref kenv n) n kenv stats visited)])
 
-  (Cont : Cont (ir label kenv stats) -> * ()
+  (Cont : Cont (ir label kenv stats visited) -> * ()
     [(cont (,n* ...) ,s* ... ,t)
-     (unless (cstats:visited? stats label)
-       (cstats:visit! stats label)
+     (unless (set-member? visited label)
+       (set-add! visited label)
        (~> (list->set n*)
-           (foldl (cute Stmt <> label <> kenv stats) _ s*)
-           (Transfer t label _ kenv stats)))])
+           (foldl (cute Stmt <> label <> kenv stats visited) _ s*)
+           (Transfer t label _ kenv stats visited)))])
 
-  (Stmt : Stmt (ir label env kenv stats) -> * ()
+  (Stmt : Stmt (ir label env kenv stats visited) -> * ()
     [(def ,n ,e)
-     (Expr e label env kenv stats)
+     (Expr e label env kenv stats visited)
      (set-add env n)]
-    [,e (Expr e label env kenv stats)])
+    [,e (Expr e label env kenv stats visited)])
 
-  (Transfer : Transfer (ir label env kenv stats) -> * ()
+  (Transfer : Transfer (ir label env kenv stats visited) -> * ()
     [(continue ,x ,a* ...)
-     (Var x #t label env kenv stats)
+     (Var x #t label env kenv stats visited)
      (for ([aexpr a*])
-       (Atom aexpr label env kenv stats))]
+       (Atom aexpr label env kenv stats visited))]
     [(if ,a? ,x1 ,x2)
-     (Atom a? label env kenv stats)
-     (Var x1 #t label env kenv stats)
-     (Var x2 #t label env kenv stats)]
+     (Atom a? label env kenv stats visited)
+     (Var x1 #t label env kenv stats visited)
+     (Var x2 #t label env kenv stats visited)]
     [(call ,x1 ,x2 ,a* ...)
-     (Var x1 #t label env kenv stats)
-     (Var x2 #f label env kenv stats)
+     (Var x1 #t label env kenv stats visited)
+     (Var x2 #f label env kenv stats visited)
      (for ([aexpr a*])
-       (Atom aexpr label env kenv stats))]
-    [(halt ,a) (Atom a label env kenv stats)])
+       (Atom aexpr label env kenv stats visited))]
+    [(halt ,a) (Atom a label env kenv stats visited)])
 
-  (Expr : Expr (ir label env kenv stats) -> * ()
+  (Expr : Expr (ir label env kenv stats visited) -> * ()
     [(fn ([,n* ,k*] ...) ,n)
      (define kenv (kenv:inject n* k*))
-     (cstats:escapes! stats n)
-     (Cont (kenv:ref kenv n) n kenv stats)
-     (cstats:transitively! stats label env n)]
+     (ltab:escape! stats n)
+     (Cont (kenv:ref kenv n) n kenv stats visited)
+     (ltab:transitively! stats label env n)]
     [(primcall ,p ,a* ...)
      (for ([aexpr a*])
-       (Atom aexpr label env kenv stats))]
-    [,a (Atom a label env kenv stats)])
+       (Atom aexpr label env kenv stats visited))]
+    [,a (Atom a label env kenv stats visited)])
 
-  (Atom : Atom (ir label env kenv stats) -> * ()
-    [,x (Var x #f label env kenv stats)]
+  (Atom : Atom (ir label env kenv stats visited) -> * ()
+    [,x (Var x #f label env kenv stats visited)]
     [(const ,c) (void)])
 
-  (Var : Var (ir call? label env kenv stats) -> * ()
-    [(lex ,n) (unless (set-member? env n) (cstats:clover-used! stats label n))]
+  (Var : Var (ir call? label env kenv stats visited) -> * ()
+    [(lex ,n) (unless (set-member? env n) (ltab:use-clover! stats label n))]
     [(label ,n)
-     ((if call? cstats:called! cstats:escapes!) stats n)
-     (Cont (kenv:ref kenv n) n kenv stats)
-     (cstats:transitively! stats label env n)])
+     ((if call? ltab:call! ltab:escape!) stats n)
+     (Cont (kenv:ref kenv n) n kenv stats visited)
+     (ltab:transitively! stats label env n)])
 
-  (let ([stats (cstats:make-builder)])
-    (Program ir stats)
-    (cstats:build stats)))
+  (let ([visited (mutable-set)]
+        [stats (ltab:new)])
+    (Program ir stats visited)
+    stats))
+
+(define-pass closure-convert : CPS (ir stats) -> CPCPS ()
+  (definitions
+    (define (fv-params env freevars)
+      (for/list ([fv freevars])
+        (hash-ref env fv fv)))
+
+    (define (fv-lexen env freevars)
+      (with-output-language (CPCPS Atom)
+        (for/list ([fv freevars])
+          `(lex ,(hash-ref env fv fv)))))
+
+    (define (fv-loads closure env freevars)
+      (with-output-language (CPCPS Stmt)
+        (for/list ([(fv i) (in-indexed freevars)])
+          `(def ,(hash-ref env fv fv) (primcall __fnGet (lex ,closure) (const ,i))))))
+
+    (define (emit-cont! cont-acc interface label cont)
+      (define label* (match interface
+                       ['lifted label]
+                       ['closed (gensym label)]))
+      (hash-set! cont-acc label cont)
+      (hash-set! (hash-ref stats label) interface label)))
+
+  (Program : Program (ir) -> Program ()
+    [(prog ([,n* ,k*] ...) ,n)
+     (define fn-acc (make-hash))
+     (define cont-acc (make-hash))
+     (for ([label n*] [cont k*])
+       (Cont cont label fn-acc cont-acc))
+     (define-values (labels conts)
+       (for/fold ([labels '()] [conts '()])
+                 ([(label cont) cont-acc])
+         (values (cons label labels) (cons cont conts))))
+     `(prog ([,(hash-keys fn-acc) ,(hash-values fn-acc)] ...)
+            ([,labels ,conts] ...) ,n)])
+
+  (Cont : Cont (ir label fn-acc cont-acc) -> Cont ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (define ltab-entry (hash-ref stats label))
+     (define freevars (hash-ref ltab-entry 'freevars))
+     (define called? (hash-has-key? ltab-entry 'called?))
+     (define escapes? (hash-has-key? ltab-entry 'escapes?))
+     (when called?
+       (let* ([env (for/hash ([fv freevars]) (values fv (gensym fv)))]
+              [stmt-acc (make-gvector)])
+         (for ([stmt s*])
+           (Stmt stmt env fn-acc stmt-acc))
+         (let ([transfer (Transfer t env stmt-acc)])
+           (emit-cont! cont-acc 'lifted label `(cont (,(fv-params env freevars) ... ,n* ...)
+                                                     ,(gvector->list stmt-acc) ...
+                                                     ,transfer)))))
+     (when escapes?
+       (let ([closure (gensym label)]
+             [env (for/hash ([fv freevars]) (values fv (gensym fv)))])
+         (if called?
+           (emit-cont! cont-acc 'closed label
+             `(cont (,closure ,n* ...)
+                    ,(fv-loads closure env freevars) ...
+                    (goto (label ,label) ,(fv-lexen env freevars) ... ,n* ...)))
+           (let ([stmt-acc (make-gvector)])
+             (for ([stmt s*])
+               (Stmt stmt env fn-acc stmt-acc))
+             (let ([transfer (Transfer t env stmt-acc)])
+               (emit-cont! cont-acc 'closed label `(cont (,closure ,n* ...)
+                                                         ,(fv-loads closure env freevars) ...
+                                                         ,(gvector->list stmt-acc) ...
+                                                         ,transfer)))))))
+     ; NOTE: unreachable continuations get implicitly eliminated here
+     ])
+
+  (Stmt : Stmt (ir env fn-acc stmt-acc) -> Stmt ()
+    [(def ,n ,e) (gvector-add! stmt-acc `(def ,n ,(Expr e env fn-acc stmt-acc)))]
+    [,e (gvector-add! stmt-acc (Expr e env fn-acc stmt-acc))])
+
+  (Transfer : Transfer (ir env stmt-acc) -> Transfer ()
+    [(continue ,x ,a* ...)
+     (define-values (x* fv-args) (Jumpee x env stmt-acc))
+     `(goto ,x* ,fv-args ... ,(map (cute Atom <> env stmt-acc) a*) ...)]
+    [(if ,a? ,x1 ,x2)
+     (define-values (x1* fv-args1) (Jumpee x1 env stmt-acc))
+     (define-values (x2* fv-args2) (Jumpee x2 env stmt-acc))
+     `(if ,(Atom a? env stmt-acc) (,x1* ,fv-args1 ...) (,x2* ,fv-args2 ...))]
+    [(call ,x1 ,x2 ,a* ...)
+     `(goto ,(Callee x1 env stmt-acc)
+            ,(Escape x2 env stmt-acc) ,(map (cute Atom <> env stmt-acc) a*) ...)]
+    [(halt ,a) `(halt ,(Atom a env stmt-acc))])
+
+  (Expr : Expr (ir env fn-acc stmt-acc) -> Expr ()
+    [(fn ([,n* ,k*] ...) ,n)
+     (define cont-acc (make-hash))
+     (for ([label n*] [cont k*])
+       (Cont cont label fn-acc cont-acc))
+     (define-values (labels conts)
+       (for/fold ([labels '()] [conts '()])
+                 ([(label cont) cont-acc])
+         (values (cons label labels) (cons cont conts))))
+     (define f (gensym 'f))
+     (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ([,labels ,conts] ...) ,n)))
+     (define freevars (hash-ref (hash-ref stats n) 'freevars))
+     `(primcall __fnNew (label ,f) ,(fv-lexen env freevars) ...)]
+    [(primcall ,p ,a* ...) `(primcall ,p ,(map (cute Atom <> env stmt-acc) a*) ...)]
+    [,a (Atom a env stmt-acc)])
+
+  (Atom : Atom (ir env stmt-acc) -> Atom ()
+    [,x (Escape x env stmt-acc)]
+    [(const ,c) `(const ,c)])
+
+  (Escape : Var (ir env stmt-acc) -> Var ()
+    [(lex ,n) `(lex ,(hash-ref env n n))]
+    [(label ,n)
+     (define cont (gensym n))
+     (define ltab-entry (hash-ref stats n))
+     (define label (hash-ref ltab-entry 'closed))
+     (define freevars (hash-ref ltab-entry 'freevars))
+     (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
+                              `(def ,cont (primcall __contNew (label ,label)
+                                                              ,(fv-lexen env freevars) ...))))
+     `(lex ,cont)])
+
+  (Callee : Var (ir env stmt-acc) -> Var ()
+    [(lex ,n)
+     (define codeptr (gensym n))
+     (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
+                              `(def ,codeptr (primcall __fnCode (lex ,n)))))
+     `(lex ,codeptr)]
+    [(label ,n) `(label ,n)])
+
+  (Jumpee : Var (ir env stmt-acc) -> Var ()
+    [(lex ,n)
+     (define codeptr (gensym n))
+     (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
+                              `(def ,codeptr (primcall __contCode (lex ,n)))))
+     (values `(lex ,codeptr) '())]
+    [(label ,n)
+     (define freevars (hash-ref (hash-ref stats n) 'freevars))
+     (values `(label ,n) (fv-lexen env freevars))]))
