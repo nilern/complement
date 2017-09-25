@@ -602,14 +602,15 @@
 
   (Transfer : Transfer (ir env stmt-acc) -> Transfer ()
     [(continue ,x ,a* ...)
-     (define-values (x* fv-args) (Jumpee x env stmt-acc))
-     `(goto ,x* ,fv-args ... ,(map (cute Atom <> env stmt-acc) a*) ...)]
+     (define-values (x* extra-args) (Jumpee x env stmt-acc))
+     `(goto ,x* ,extra-args ... ,(map (cute Atom <> env stmt-acc) a*) ...)]
     [(if ,a? ,x1 ,x2)
-     (define-values (x1* fv-args1) (Jumpee x1 env stmt-acc))
-     (define-values (x2* fv-args2) (Jumpee x2 env stmt-acc))
-     `(if ,(Atom a? env stmt-acc) (,x1* ,fv-args1 ...) (,x2* ,fv-args2 ...))]
+     (define-values (x1* extra-args1) (Jumpee x1 env stmt-acc))
+     (define-values (x2* extra-args2) (Jumpee x2 env stmt-acc))
+     `(if ,(Atom a? env stmt-acc) (,x1* ,extra-args1 ...) (,x2* ,extra-args2 ...))]
     [(call ,x1 ,x2 ,a* ...)
-     `(goto ,(Callee x1 env stmt-acc)
+     (define-values (x1* extra-args) (Callee x1 env stmt-acc))
+     `(goto ,x1* ,extra-args ...
             ,(Escape x2 env stmt-acc) ,(map (cute Atom <> env stmt-acc) a*) ...)]
     [(halt ,a) `(halt ,(Atom a env stmt-acc))])
 
@@ -625,7 +626,7 @@
      (define f (gensym 'f))
      (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ([,labels ,conts] ...) ,n)))
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
-     `(primcall __fnNew (label ,f) ,(fv-lexen env freevars) ...)]
+     `(primcall __fnNew (proc ,f) ,(fv-lexen env freevars) ...)]
     [(primcall ,p ,a* ...) `(primcall ,p ,(map (cute Atom <> env stmt-acc) a*) ...)]
     [,a (Atom a env stmt-acc)])
 
@@ -649,16 +650,16 @@
     [(lex ,n)
      (define codeptr (gensym n))
      (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
-                              `(def ,codeptr (primcall __fnCode (lex ,n)))))
-     `(lex ,codeptr)]
-    [(label ,n) `(label ,n)])
+                              `(def ,codeptr (primcall __fnCode (lex ,(hash-ref env n n))))))
+     (values `(lex ,codeptr) (list `(lex ,(hash-ref env n n))))]
+    [(label ,n) (error "(label n) as callee")])
 
   (Jumpee : Var (ir env stmt-acc) -> Var ()
     [(lex ,n)
      (define codeptr (gensym n))
      (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
-                              `(def ,codeptr (primcall __contCode (lex ,n)))))
-     (values `(lex ,codeptr) '())]
+                              `(def ,codeptr (primcall __contCode (lex ,(hash-ref env n n))))))
+     (values `(lex ,codeptr) (list `(lex ,(hash-ref env n n))))]
     [(label ,n)
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
      (values `(label ,n) (fv-lexen env freevars))]))

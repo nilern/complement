@@ -2,7 +2,7 @@
 
 (module+ main
   (require racket/pretty
-           "parse.rkt" "passes.rkt" "eval.rkt" "eval-cps.rkt")
+           "parse.rkt" "passes.rkt" "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define input
     (open-input-string (vector-ref (current-command-line-arguments) 0)))
@@ -50,10 +50,11 @@
 
   (printf "\n===\n\n")
 
-  (define stats (analyze-closures cps))
-  (pretty-print stats)
+  (define cpcps
+    (let ([stats (analyze-closures cps)])
+      (closure-convert cps stats)))
+  (pretty-print cpcps)
 
   (printf "\n---\n\n")
 
-  (define cpcps (closure-convert cps stats))
-  (pretty-print cpcps))
+  (eval-CPCPS cpcps))
