@@ -4,7 +4,7 @@
 (require racket/match racket/undefined (only-in racket/hash hash-union) (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt" (prefix-in env: (submod "eval-cps.rkt" env))
-                     (prefix-in kenv: (submod "eval-cps.rkt" cont-env)))
+                     (prefix-in kenv: (submod "util.rkt" cont-env)))
 
 ;;;; Values
 

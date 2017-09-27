@@ -35,26 +35,11 @@
       (raise (exn:unbound (format "unbound variable ~s" name)
                           (current-continuation-marks))))))
 
-(module cont-env racket/base
-  (provide inject ref)
-  (require "util.rkt")
-
-  (define (inject names conts)
-    (for/hash ([name names]
-               [cont conts])
-      (values name cont)))
-
-  (define (ref env name)
-    (if (hash-has-key? env name)
-      (hash-ref env name)
-      (raise (exn:unbound (format "unbound variable ~s" name)
-                          (current-continuation-marks))))))
-
 ;;;; Eval
 
 (require (prefix-in value: (submod "." value))
          (prefix-in env: (submod "." env))
-         (prefix-in kenv: (submod "." cont-env)))
+         (prefix-in kenv: (submod "util.rkt" cont-env)))
 
 ;; TODO: dominator scoping rule
 (define-pass eval-CPS : CPS (ir) -> * ()

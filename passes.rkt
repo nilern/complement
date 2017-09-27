@@ -444,23 +444,8 @@
           #:when (not (set-member? env fv)))
       (set-add! freevars fv))))
 
-(module cont-env racket/base ;; FIXME: this is copy-pasted from eval-CPS
-  (provide inject ref)
-  (require "util.rkt")
-
-  (define (inject names conts)
-    (for/hash ([name names]
-               [cont conts])
-      (values name cont)))
-
-  (define (ref env name)
-    (if (hash-has-key? env name)
-      (hash-ref env name)
-      (raise (exn:unbound (format "unbound variable ~s" name)
-                          (current-continuation-marks))))))
-
 (require (prefix-in ltab: (submod "." label-table))
-         (prefix-in kenv: (submod "." cont-env)))
+         (prefix-in kenv: (submod "util.rkt" cont-env)))
 
 (define-pass analyze-closures : CPS (ir) -> * ()
   (Program : Program (ir stats visited) -> * ()
