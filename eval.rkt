@@ -4,7 +4,7 @@
 
 (require racket/undefined racket/match (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt")
+         "langs.rkt" (prefix-in primops: "primops.rkt"))
 
 ;;;; Value
 
@@ -141,16 +141,7 @@
               (Expr e? cont* lenv* denv*))])]
         ['() (error "argc")]))
 
-    (define (primapply op args)
-      (match* (op args)
-        [('__iEq (list a b)) (= a b)]
-        [('__denvNew '()) (env:empty)]
-        [('__tupleNew _) (list->vector args)]
-        [('__tupleLength (list tuple)) (vector-length tuple)]
-        [('__tupleGet (list tuple index)) (vector-ref tuple index)]
-        [('__boxNew '()) (box undefined)]
-        [('__boxSet (list loc val)) (set-box! loc val)]
-        [('__boxGet (list loc)) (unbox loc)])))
+    (define primapply (primops:primapply primops:base-ops)))
 
   (Expr : Expr (expr cont lenv denv) -> * ()
     [(fn ,fc* ...) (continue cont (value:$fn fc* lenv ))]

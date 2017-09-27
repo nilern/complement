@@ -3,8 +3,9 @@
 (provide eval-CPCPS)
 (require racket/match racket/undefined (only-in racket/hash hash-union) (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt" (prefix-in env: (submod "eval-cps.rkt" env))
-                     (prefix-in kenv: (submod "util.rkt" cont-env)))
+         "langs.rkt" (prefix-in primops: "primops.rkt")
+         (prefix-in env: (submod "eval-cps.rkt" env))
+         (prefix-in kenv: (submod "util.rkt" cont-env)))
 
 ;;;; Values
 
@@ -35,22 +36,17 @@
                         (for/hash ([name n*] [arg args]) (values name arg))))
          (eval-block s* t next-fn env* kenv fenv rfenv)]))
 
-    (define (primapply fenv op args)
-      (match* (op args)
-        [('__iEq (list a b)) (= a b)]
-        [('__denvNew '()) (env:empty)]
-        [('__fnNew (cons fn freevars)) (value:$fn fn (list->vector freevars))]
-        [('__fnCode (list (value:$fn code _))) (kenv:ref fenv code)]
-        [('__fnGet (list (or (value:$fn _ freevars) (value:$cont _ freevars)) i))
-         (vector-ref freevars i)]
-        [('__contNew (cons cont freevars)) (value:$cont cont (list->vector freevars))]
-        [('__contCode (list (value:$cont code _))) code]
-        [('__tupleNew _) (list->vector args)]
-        [('__tupleLength (list tuple)) (vector-length tuple)]
-        [('__tupleGet (list tuple index)) (vector-ref tuple index)]
-        [('__boxNew '()) (box undefined)]
-        [('__boxSet (list loc val)) (set-box! loc val)]
-        [('__boxGet (list loc)) (unbox loc)])))
+    (define primapply
+      (let ([primapply* (primops:primapply (hash-union primops:base-ops primops:denv-ops))])
+        (λ (fenv op args)
+          (match* (op args)
+            [('__fnNew (cons fn freevars)) (value:$fn fn (list->vector freevars))]
+            [('__fnCode (list (value:$fn code _))) (kenv:ref fenv code)]
+            [('__fnGet (list (or (value:$fn _ freevars) (value:$cont _ freevars)) i))
+             (vector-ref freevars i)]
+            [('__contNew (cons cont freevars)) (value:$cont cont (list->vector freevars))]
+            [('__contCode (list (value:$cont code _))) code]
+            [(_ _) (primapply* op args)])))))
 
   (Program : Program (ir) -> * ()
     [(prog ([,n1* ,f*] ...) ([,n2* ,k*] ...) ,n)

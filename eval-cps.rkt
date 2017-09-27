@@ -1,9 +1,9 @@
 #lang racket/base
 
 (provide eval-CPS)
-(require racket/match racket/undefined (only-in srfi/26 cute)
+(require racket/match racket/hash racket/undefined (only-in srfi/26 cute)
          nanopass/base
-         "util.rkt" "langs.rkt")
+         "util.rkt" "langs.rkt" (prefix-in primops: "primops.rkt"))
 
 ;;;; Values
 
@@ -64,16 +64,7 @@
                    [kenv (kenv:inject labels conts)])
         (apply-label (kenv:ref kenv entry) env kenv args)))
 
-    (define (primapply op args)
-      (match* (op args)
-        [('__iEq (list a b)) (= a b)]
-        [('__denvNew '()) (env:empty)]
-        [('__tupleNew _) (list->vector args)]
-        [('__tupleLength (list tuple)) (vector-length tuple)]
-        [('__tupleGet (list tuple index)) (vector-ref tuple index)]
-        [('__boxNew '()) (box undefined)]
-        [('__boxSet (list loc val)) (set-box! loc val)]
-        [('__boxGet (list loc)) (unbox loc)])))
+    (define primapply (primops:primapply (hash-union primops:base-ops primops:denv-ops))))
 
   (Program : Program (ir) -> * ()
     [(prog ([,n* ,k*] ...) ,n)
