@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide exn:unbound exn:unbound? zipmap clj-group-by)
+(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by)
 (require (only-in srfi/26 cute))
 
 (struct exn:unbound exn:fail ())
@@ -11,9 +11,16 @@
     (raise (exn:unbound (format "unbound variable ~s" name)
                         (current-continuation-marks)))))
 
-(define (zipmap ks vs)
+(define (zip-hash ks vs)
   (for/hash ([k ks] [v vs])
     (values k v)))
+
+(define (unzip-hash kvs)
+  (define-values (ks vs)
+    (for/fold ([ks '()] [vs '()])
+              ([(k v) kvs])
+      (values (cons k ks) (cons v vs))))
+  (values (reverse ks) (reverse vs)))
 
 (define (clj-group-by f coll)
   (define groups
@@ -24,5 +31,5 @@
     (values k (reverse v))))
 
 (module* cont-env #f
-  (provide (rename-out [zipmap inject]
+  (provide (rename-out [zip-hash inject]
                        [hash-env-ref ref])))

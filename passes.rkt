@@ -4,7 +4,7 @@
          cps-convert analyze-closures closure-convert)
 (require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
-         (only-in "util.rkt" clj-group-by) "langs.rkt")
+         (only-in "util.rkt" clj-group-by unzip-hash) "langs.rkt")
 
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions
@@ -540,11 +540,9 @@
      (define cont-acc (make-hash))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
-     (define-values (labels conts)
-       (for/fold ([labels '()] [conts '()])
-                 ([(label cont) cont-acc])
-         (values (cons label labels) (cons cont conts))))
-     `(prog ([,(hash-keys fn-acc) ,(hash-values fn-acc)] ...)
+     (define-values (fn-names fns) (unzip-hash fn-acc))
+     (define-values (labels conts) (unzip-hash cont-acc))
+     `(prog ([,fn-names ,fns] ...)
             ([,labels ,conts] ...) ,n)])
 
   (Cont : Cont (ir label fn-acc cont-acc) -> Cont ()
@@ -604,10 +602,7 @@
      (define cont-acc (make-hash))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
-     (define-values (labels conts)
-       (for/fold ([labels '()] [conts '()])
-                 ([(label cont) cont-acc])
-         (values (cons label labels) (cons cont conts))))
+     (define-values (labels conts) (unzip-hash cont-acc))
      (define f (gensym 'f))
      (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ([,labels ,conts] ...) ,n)))
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
