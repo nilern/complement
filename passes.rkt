@@ -527,23 +527,37 @@
         (for/list ([(fv i) (in-indexed freevars)])
           `(def ,(hash-ref env fv fv) (primcall __fnGet (lex ,closure) (const ,i))))))
 
+    (struct $cont-acc (conts entry-point return-points))
+
+    (define (make-cont-acc entry)
+      ($cont-acc (make-hash) entry (mutable-set)))
+
     (define (emit-cont! cont-acc interface label cont)
+      (match-define ($cont-acc conts entry return-points) cont-acc)
       (define label* (match interface
                        ['lifted label]
-                       ['closed (gensym label)]))
-      (hash-set! cont-acc label cont)
-      (hash-set! (hash-ref stats label) interface label)))
+                       ['closed
+                        (unless (eq? label entry) (set-add! return-points label))
+                        (gensym label)]))
+      (hash-set! conts label cont)
+      (hash-set! (hash-ref stats label) interface label))
+
+    (define build-conts
+      (match-lambda
+        [($cont-acc conts entry return-points)
+         (let-values ([(labels conts) (unzip-hash conts)])
+           (values labels conts (set->list return-points)))])))
 
   (Program : Program (ir) -> Program ()
     [(prog ([,n* ,k*] ...) ,n)
      (define fn-acc (make-hash))
-     (define cont-acc (make-hash))
+     (define cont-acc (make-cont-acc n))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
      (define-values (fn-names fns) (unzip-hash fn-acc))
-     (define-values (labels conts) (unzip-hash cont-acc))
+     (define-values (labels conts return-points) (build-conts cont-acc))
      `(prog ([,fn-names ,fns] ...)
-            ([,labels ,conts] ...) ,n)])
+            ([,labels ,conts] ...) (,n ,return-points ...))])
 
   (Cont : Cont (ir label fn-acc cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
@@ -599,12 +613,13 @@
 
   (Expr : Expr (ir env fn-acc stmt-acc) -> Expr ()
     [(fn ([,n* ,k*] ...) ,n)
-     (define cont-acc (make-hash))
+     (define cont-acc (make-cont-acc n))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
-     (define-values (labels conts) (unzip-hash cont-acc))
+     (define-values (labels conts return-points) (build-conts cont-acc))
      (define f (gensym 'f))
-     (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ([,labels ,conts] ...) ,n)))
+     (hash-set! fn-acc f (with-output-language (CPCPS Fn)
+                           `(fn ([,labels ,conts] ...) (,n ,return-points ...))))
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
      `(primcall __fnNew (proc ,f) ,(fv-lexen env freevars) ...)]
     [(primcall ,p ,a* ...) `(primcall ,p ,(map (cute Atom <> env stmt-acc) a*) ...)]
