@@ -1,7 +1,7 @@
 #lang racket
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
-         cps-convert analyze-closures closure-convert cpcps-cfg-rpo)
+         cps-convert analyze-closures closure-convert cpcps-shrink)
 (require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          (only-in "util.rkt" clj-group-by unzip-hash) "langs.rkt")
@@ -714,7 +714,7 @@
 
     (Callee : Var (ir) -> * ()
       [(lex ,n) (void)]
-      [(label ,n) (calls! label n)]
+      [(label ,n) (calls! ltab label n)]
       [(proc ,n) (void)])
 
     (Cont ir))
@@ -739,3 +739,139 @@
   (for ([entry entries])
     (visit! entry))
   rpo)
+
+(require (prefix-in cc-ltab: (submod "." cpcps-label-table)))
+
+(define-pass cpcps-shrink : CPCPS (ir) -> CPCPS ()
+  (definitions
+    (define (emit-stmt! stmt-acc name expr)
+      (with-output-language (CPCPS Stmt)
+        (gvector-add! stmt-acc (if name `(def ,name ,expr) expr))))
+
+    (define (cc-ltab-arglists ltab caller callee)
+      (nanopass-case (CPCPS Transfer) (hash-ref (hash-ref ltab caller) 'transfer)
+        [(goto (label ,n) ,a* ...) (if (eq? n callee) (list a*) '())]
+        [(goto ,x ,a* ...) '()]
+        [(if ,a? ((label ,n1) ,a1* ...) ((label ,n2) ,a2* ...))
+         (if (eq? n1 callee)
+           (if (eq? n2 callee) (list a1* a2*) (list a1*))
+           (if (eq? n2 callee) (list a2*) '()))]
+        [(if ,a? ((label ,n1) ,a1* ...) (,x2 ,a2* ...))
+         (if (eq? n1 callee) (list a1*) '())]
+        [(if ,a? (,x1 ,a1* ...) ((label ,n2) ,a2* ...))
+         (if (eq? n2 callee) (list a2*) '())]
+        [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...)) '()]
+        [(halt ,a) '()]))
+
+    (define (join-atoms atoms)
+      (define (join2 atom1 atom2)
+        (if (equal? atom1 atom2) atom1 #f))
+      (match atoms
+        ['() #f]
+        [(cons atom atoms) (foldl join2 atom atoms)]))
+
+    (define (shrink-call label keep-indices callee args)
+      (nanopass-case (CPCPS Var) callee
+        [(lex ,n) (values callee args)]
+        [(label ,n)
+         (values callee
+                 (if (eq? n label)
+                   (for/list ([(arg i) (in-indexed args)]
+                              #:when (set-member? keep-indices i))
+                     arg)
+                   args))]
+        [(proc ,n) (values callee args)]))
+
+    (define (params! ltab label params)
+      (let* ([callers (hash-ref (hash-ref ltab label) 'callers)]
+             [arglists (append-map (cute cc-ltab-arglists ltab <> label) callers)]
+             [env (make-hash)]
+             [keep-indices (mutable-set)]
+             [params* (for/fold ([params '()])
+                                ([(param index) (in-indexed params)]
+                                 [aexprs (apply map list arglists)]) ;; OPTIMIZE: is `apply` slow?
+                        (match (join-atoms aexprs)
+                          [#f (set-add! keep-indices index)
+                              (cons param params)]
+                          [atom (hash-set! env param (car aexprs))
+                                params]))])
+        (for ([caller callers])
+          (hash-update! (hash-ref ltab caller) 'transfer
+                        (cute ShrinkTransfer <> label keep-indices)))
+        (values (reverse params*) env)))
+
+    (define (cfg labels conts entries)
+      (with-output-language (CPCPS Cont)
+        (define ltab (cc-ltab:make labels conts entries))
+        (define kenv (kenv:inject labels conts))
+        (for ([label (cpcps-cfg-rpo ltab entries)])
+          (Cont (kenv:ref kenv label) label ltab))
+        (define-values (rlabels rconts)
+          (for/fold ([labels '()] [conts '()])
+                    ([(label ltab-entry) ltab])
+            (values (cons label labels)
+                    (cons `(cont (,(hash-ref ltab-entry 'params) ...)
+                             ,(hash-ref ltab-entry 'stmts) ...
+                             ,(hash-ref ltab-entry 'transfer))
+                          conts))))
+        (values (reverse rlabels) (reverse rconts)))))
+
+  (Program : Program (ir) -> Program ()
+    [(prog ([,n1* ,[f*]] ...) ([,n2* ,k*]) (,n3* ...))
+     (define-values (labels conts) (cfg n2* k* n3*))
+     `(prog ([,n1* ,f*]) ([,labels ,conts] ...) (,n3* ...))])
+
+  (Fn : Fn (ir) -> Fn ()
+    [(fn ([,n1* ,k*] ...) (,n2* ...))
+     (define-values (labels conts) (cfg n1* k* n2*))
+     `(fn ([,labels ,conts] ...) (,n2* ...))])
+
+  (Cont : Cont (ir label ltab) -> * ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (define ltab-entry (hash-ref ltab label))
+     (define-values (params env)
+       (if (hash-ref ltab-entry 'escapes?)
+         (values n* (make-hash))
+         (params! ltab label n*)))
+     (hash-set! ltab-entry 'params params)
+     (define stmt-acc (make-gvector))
+     (for ([stmt s*])
+       (Stmt stmt env stmt-acc))
+     (hash-set! ltab-entry 'stmts (gvector->list stmt-acc))
+     (hash-set! ltab-entry 'transfer (Transfer t env))])
+
+  (Stmt : Stmt (ir env stmt-acc) -> * ()
+    [(def ,n ,e) (Expr e n env stmt-acc)]
+    [,e (Expr e #f env stmt-acc)])
+
+  (Transfer : Transfer (ir env) -> Transfer ()
+    [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
+     `(if ,(Atom a? env)
+        (,(Var x1 env) ,(map (cute Atom <> env) a1*) ...)
+        (,(Var x2 env) ,(map (cute Atom <> env) a2*) ...))]
+    [(halt ,a) `(halt ,(Atom a env))])
+
+  (ShrinkTransfer : Transfer (ir label keep-indices) -> Transfer ()
+    [(goto ,x ,a* ...)
+     (define-values (callee args) (shrink-call label keep-indices x a*))
+     `(goto ,callee ,args ...)]
+    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
+     (define-values (callee1 args1) (shrink-call label keep-indices x1 a1*))
+     (define-values (callee2 args2) (shrink-call label keep-indices x2 a2*))
+     `(if ,a? (,callee1 ,args1 ...) (,callee2 ,args2 ...))]
+    [(halt ,a) ir])
+
+  (Expr : Expr (ir name env stmt-acc) -> Expr ()
+    [(primcall ,p ,a* ...)
+     (emit-stmt! stmt-acc name `(primcall ,p ,(map (cute Atom <> env) a*) ...))]
+    [,a (hash-set! env name (Atom a env))])
+
+  (Atom : Atom (ir env) -> Atom ()
+    [(const ,c) ir]
+    [,x (Var x env)])
+
+  (Var : Var (ir env) -> Var ()
+    [(lex ,n) (hash-ref env n ir)]
+    [(label ,n) ir]
+    [(proc ,n) ir]))

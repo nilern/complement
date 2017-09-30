@@ -59,4 +59,13 @@
 
   (printf "\n---\n\n")
 
+  (eval-CPCPS cpcps)
+
+  (printf "\n===\n\n")
+
+  (define cpcps* (cpcps-shrink cpcps))
+  (pretty-print cpcps*)
+
+  (printf "\n---\n\n")
+
   (eval-CPCPS cpcps))
