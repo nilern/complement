@@ -1,7 +1,7 @@
 #lang racket
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch
-         cps-convert analyze-closures closure-convert)
+         cps-convert analyze-closures closure-convert cpcps-cfg-rpo)
 (require racket/hash data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          (only-in "util.rkt" clj-group-by unzip-hash) "langs.rkt")
@@ -658,3 +658,84 @@
     [(label ,n)
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
      (values `(label ,n) (fv-lexen env freevars))]))
+
+;; Bidirectional direct-call graph of a CPCPS CFG
+(module cpcps-label-table racket/base
+  (provide make)
+  (require (only-in srfi/26 cute) nanopass/base
+           "langs.rkt")
+
+  (define (make-entry)
+    (make-hash '((escapes? . #f) (callers . ()) (callees . ()))))
+
+  (define ref! (cute hash-ref! <> <> make-entry))
+
+  (define (calls! ltab caller callee)
+    (hash-update! (ref! ltab caller) 'callees (cute cons callee <>))
+    (hash-update! (ref! ltab callee) 'callers (cute cons caller <>)))
+
+  (define (escapes! ltab label)
+    (hash-set! (ref! ltab label) 'escapes? #t))
+
+  (define-pass initialize! : CPCPS (ir label ltab) -> * ()
+    (Cont : Cont (ir) -> * ()
+      [(cont (,n* ...) ,s* ... ,t)
+       (for ([stmt s*]) (Stmt stmt))
+       (Transfer t)])
+
+    (Stmt : Stmt (ir) -> * ()
+      [(def ,n ,e) (Expr e)]
+      [,e (Expr e)])
+
+    (Transfer : Transfer (ir) -> * ()
+      [(goto ,x ,a* ...)
+       (Callee x)
+       (for ([atom a*]) (Atom atom))]
+      [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
+       (Atom a?)
+       (Callee x1)
+       (for ([atom a1*]) (Atom atom))
+       (Callee x2)
+       (for ([atom a2*]) (Atom atom))]
+      [(halt ,a) (Atom a)])
+
+    (Expr : Expr (ir) -> * ()
+      [(primcall ,p ,a* ...) (for ([atom a*]) (Atom atom))]
+      [,a (Atom a)])
+
+    (Atom : Atom (ir) -> * ()
+      [(const ,c) (void)]
+      [,x (Var x)])
+
+    (Var : Var (ir) -> * ()
+      [(lex ,n) (void)]
+      [(label ,n) (escapes! ltab n)]
+      [(proc ,n) (void)])
+
+    (Callee : Var (ir) -> * ()
+      [(lex ,n) (void)]
+      [(label ,n) (calls! label n)]
+      [(proc ,n) (void)])
+
+    (Cont ir))
+
+  (define (make labels conts entries)
+    (define ltab (make-hash))
+    (for ([label labels] [cont conts])
+      (initialize! cont label ltab))
+    (for ([entry entries])
+      (escapes! ltab entry))
+    ltab))
+
+(define (cpcps-cfg-rpo label-table entries)
+  (define visited (mutable-set))
+  (define rpo '())
+  (define (visit! label)
+    (unless (set-member? visited label)
+      (set-add! visited label)
+      (for ([succ (hash-ref (hash-ref label-table label) 'callees)])
+        (visit! succ))
+      (set! rpo (cons label rpo))))
+  (for ([entry entries])
+    (visit! entry))
+  rpo)

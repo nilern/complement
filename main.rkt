@@ -1,8 +1,10 @@
 #lang racket/base
 
 (module+ main
-  (require racket/pretty
-           "parse.rkt" "passes.rkt" "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
+  (require racket/pretty nanopass/base
+           "parse.rkt"
+           "langs.rkt" "passes.rkt" (prefix-in ltab: (submod "passes.rkt" cpcps-label-table))
+           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define input
     (open-input-string (vector-ref (current-command-line-arguments) 0)))

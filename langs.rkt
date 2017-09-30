@@ -94,6 +94,8 @@
   (Case (fc)
     (- (case (n* ...) e? e))))
 
+;;; TODO: make CFG component of programs and functions explicit
+
 (define-language CPS
   (terminals
     (name (n))
