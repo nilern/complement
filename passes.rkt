@@ -261,9 +261,9 @@
       (gvector-add! ($cfg-builder-conts builder) cont))
 
     (define (build-cfg builder)
-      (values (gvector->list ($cfg-builder-labels builder))
-              (gvector->list ($cfg-builder-conts builder))
-              ($cfg-builder-entry builder)))
+      (with-output-language (CPS CFG)
+        (match-define ($cfg-builder entry labels conts) builder)
+        `(cfg ([,(gvector->list labels) ,(gvector->list conts)] ...) ,entry)))
 
     (struct $cont-builder (label formals stmts))
 
@@ -379,18 +379,18 @@
           [($cont:halt)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define-values (label cont) (build-cont/atom cont-builder aexpr))
-           (emit-cont! cfg-builder label cont)]))))
+           (emit-cont! cfg-builder label cont)])))
+
+    (define (body expr cont entry params)
+      (let* ([cont-builder (make-cont-builder entry params)]
+             [cfg-builder (make-cfg-builder entry)]
+             [transfer (Expr expr cont cont-builder cfg-builder)])
+        (build-cfg cfg-builder))))
 
   (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
     [(fn (,n* ...) ,e)
-     (define f
-       (let* ([entry (gensym 'entry)]
-              [ret (gensym 'ret)]
-              [cont-builder (make-cont-builder entry (cons ret n*))]
-              [cfg-builder (make-cfg-builder entry)]
-              [transfer (Expr e ($cont:return `(lex ,ret)) cont-builder cfg-builder)])
-         (define-values (labels conts entry) (build-cfg cfg-builder))
-         `(fn ([,labels ,conts] ...) ,entry)))
+     (define ret (gensym 'ret))
+     (define f `(fn ,(body e ($cont:return `(lex ,ret)) (gensym 'entry) (cons ret n*))))
      (continue cont f #f cont-builder cfg-builder)]
     [(if ,e? ,e1 ,e2) (Expr e? ($cont:if cont e1 e2) cont-builder cfg-builder)]
     [(block ,e) (Expr e cont cont-builder cfg-builder)]
@@ -407,12 +407,7 @@
     [(def ,n ,e) (Expr e ($cont:def cont n) cont-builder cfg-builder)]
     [,e (Expr e cont cont-builder cfg-builder)])
 
-  (let* ([entry (gensym 'main)]
-         [cont-builder (make-cont-builder entry '())]
-         [cfg-builder (make-cfg-builder entry)]
-         [transfer (Expr ir ($cont:halt) cont-builder cfg-builder)])
-    (define-values (labels conts entry) (build-cfg cfg-builder))
-    `(prog ([,labels ,conts] ...) ,entry)))
+  (body ir ($cont:halt) (gensym 'main) '()))
 
 (module label-table racket/base
   (provide new call! escape! use-clover! transitively!)
@@ -448,8 +443,8 @@
          (prefix-in kenv: (submod "util.rkt" cont-env)))
 
 (define-pass analyze-closures : CPS (ir) -> * ()
-  (Program : Program (ir stats visited) -> * ()
-    [(prog ([,n* ,k*] ...) ,n)
+  (CFG : CFG (ir stats visited) -> * ()
+    [(cfg ([,n* ,k*] ...) ,n)
      (define kenv (kenv:inject n* k*))
      (ltab:escape! stats n)
      (Cont (kenv:ref kenv n) n kenv stats visited)])
@@ -485,11 +480,10 @@
     [(halt ,a) (Atom a label env kenv stats visited)])
 
   (Expr : Expr (ir label env kenv stats visited) -> * ()
-    [(fn ([,n* ,k*] ...) ,n)
-     (define kenv (kenv:inject n* k*))
-     (ltab:escape! stats n)
-     (Cont (kenv:ref kenv n) n kenv stats visited)
-     (ltab:transitively! stats label env n)]
+    [(fn ,blocks)
+     (CFG blocks stats visited)
+     (nanopass-case (CPS CFG) blocks
+       [(cfg ([,n* ,k*] ...) ,n) (ltab:transitively! stats label env n)])]
     [(primcall ,p ,a* ...)
      (for ([aexpr a*])
        (Atom aexpr label env kenv stats visited))]
@@ -508,7 +502,7 @@
 
   (let ([visited (mutable-set)]
         [stats (ltab:new)])
-    (Program ir stats visited)
+    (CFG ir stats visited)
     stats))
 
 (define-pass closure-convert : CPS (ir stats) -> CPCPS ()
@@ -542,22 +536,19 @@
       (hash-set! conts label cont)
       (hash-set! (hash-ref stats label) interface label))
 
-    (define build-conts
-      (match-lambda
-        [($cont-acc conts entry return-points)
-         (let-values ([(labels conts) (unzip-hash conts)])
-           (values labels conts (set->list return-points)))])))
+    (define build-cfg
+      (with-output-language (CPCPS CFG)
+        (match-lambda
+          [($cont-acc conts entry return-points)
+           (let-values ([(labels conts) (unzip-hash conts)])
+             `(cfg ([,labels ,conts] ...) (,entry ,(set->list return-points) ...)))]))))
 
-  (Program : Program (ir) -> Program ()
-    [(prog ([,n* ,k*] ...) ,n)
-     (define fn-acc (make-hash))
+  (CFG : CFG (ir fn-acc) -> Program ()
+    [(cfg ([,n* ,k*] ...) ,n)
      (define cont-acc (make-cont-acc n))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
-     (define-values (fn-names fns) (unzip-hash fn-acc))
-     (define-values (labels conts return-points) (build-conts cont-acc))
-     `(prog ([,fn-names ,fns] ...)
-            ([,labels ,conts] ...) (,n ,return-points ...))])
+     (build-cfg cont-acc)])
 
   (Cont : Cont (ir label fn-acc cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
@@ -612,16 +603,14 @@
     [(halt ,a) `(halt ,(Atom a env stmt-acc))])
 
   (Expr : Expr (ir env fn-acc stmt-acc) -> Expr ()
-    [(fn ([,n* ,k*] ...) ,n)
-     (define cont-acc (make-cont-acc n))
-     (for ([label n*] [cont k*])
-       (Cont cont label fn-acc cont-acc))
-     (define-values (labels conts return-points) (build-conts cont-acc))
+    [(fn ,blocks)
      (define f (gensym 'f))
-     (hash-set! fn-acc f (with-output-language (CPCPS Fn)
-                           `(fn ([,labels ,conts] ...) (,n ,return-points ...))))
-     (define freevars (hash-ref (hash-ref stats n) 'freevars))
-     `(primcall __fnNew (proc ,f) ,(fv-lexen env freevars) ...)]
+     (define cfg (CFG blocks fn-acc))
+     (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ,cfg)))
+     (nanopass-case (CPS CFG) blocks
+       [(cfg ([,n* ,k*] ...) ,n)
+        (define freevars (hash-ref (hash-ref stats n) 'freevars))
+        `(primcall __fnNew (proc ,f) ,(fv-lexen env freevars) ...)])]
     [(primcall ,p ,a* ...) `(primcall ,p ,(map (cute Atom <> env stmt-acc) a*) ...)]
     [,a (Atom a env stmt-acc)])
 
@@ -657,7 +646,12 @@
      (values `(lex ,codeptr) (list `(lex ,(hash-ref env n n))))]
     [(label ,n)
      (define freevars (hash-ref (hash-ref stats n) 'freevars))
-     (values `(label ,n) (fv-lexen env freevars))]))
+     (values `(label ,n) (fv-lexen env freevars))])
+
+  (let*-values ([(fn-acc) (make-hash)]
+                [(cfg) (CFG ir fn-acc)]
+                [(fn-names fns) (unzip-hash fn-acc)])
+     `(prog ([,fn-names ,fns] ...) ,cfg)))
 
 ;; Bidirectional direct-call graph of a CPCPS CFG
 (module cpcps-label-table racket/base
@@ -798,33 +792,24 @@
         (for ([caller callers])
           (hash-update! (hash-ref ltab caller) 'transfer
                         (cute ShrinkTransfer <> label keep-indices)))
-        (values (reverse params*) env)))
+        (values (reverse params*) env))))
 
-    (define (cfg labels conts entries)
-      (with-output-language (CPCPS Cont)
-        (define ltab (cc-ltab:make labels conts entries))
-        (define kenv (kenv:inject labels conts))
-        (for ([label (cpcps-cfg-rpo ltab entries)])
-          (Cont (kenv:ref kenv label) label ltab))
-        (define-values (rlabels rconts)
-          (for/fold ([labels '()] [conts '()])
-                    ([(label ltab-entry) ltab])
-            (values (cons label labels)
-                    (cons `(cont (,(hash-ref ltab-entry 'params) ...)
-                             ,(hash-ref ltab-entry 'stmts) ...
-                             ,(hash-ref ltab-entry 'transfer))
-                          conts))))
-        (values (reverse rlabels) (reverse rconts)))))
-
-  (Program : Program (ir) -> Program ()
-    [(prog ([,n1* ,[f*]] ...) ([,n2* ,k*]) (,n3* ...))
-     (define-values (labels conts) (cfg n2* k* n3*))
-     `(prog ([,n1* ,f*]) ([,labels ,conts] ...) (,n3* ...))])
-
-  (Fn : Fn (ir) -> Fn ()
-    [(fn ([,n1* ,k*] ...) (,n2* ...))
-     (define-values (labels conts) (cfg n1* k* n2*))
-     `(fn ([,labels ,conts] ...) (,n2* ...))])
+  (CFG : CFG (ir) -> CFG ()
+    [(cfg ([,n1* ,k*] ...) (,n2* ...))
+     (define ltab (cc-ltab:make n1* k* n2*))
+     (define kenv (kenv:inject n1* k*))
+     (for ([label (cpcps-cfg-rpo ltab n2*)])
+       (Cont (kenv:ref kenv label) label ltab))
+     (define-values (rlabels rconts)
+       (with-output-language (CPCPS Cont)
+         (for/fold ([labels '()] [conts '()])
+                   ([(label ltab-entry) ltab])
+           (values (cons label labels)
+                   (cons `(cont (,(hash-ref ltab-entry 'params) ...)
+                            ,(hash-ref ltab-entry 'stmts) ...
+                            ,(hash-ref ltab-entry 'transfer))
+                         conts)))))
+     `(cfg ([,(reverse rlabels) ,(reverse rconts)] ...) (,n2* ...))])
 
   (Cont : Cont (ir label ltab) -> * ()
     [(cont (,n* ...) ,s* ... ,t)

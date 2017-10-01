@@ -50,23 +50,25 @@
 
   ;; TODO: make this cleaner
   (Program : Program (ir) -> * ()
-    [(prog ([,n1* ,f*] ...) ([,n2* ,k*] ...) (,n3* ...))
-     (define n (car n3*))
-     (define-values (kenv fenv rfenv)
-       (for/fold ([kenv (kenv:inject n2* k*)]
-                  [fenv (hash)]
-                  [rfenv (for/hash ([label n2*]) (values label #f))])
-                 ([name n1*] [f f*])
-         (nanopass-case (CPCPS Fn) f
-           [(fn ([,n1* ,k*] ...) (,n2* ...))
-            (define n (car n2*))
-            (values (hash-union kenv (kenv:inject n1* k*))
-                    (hash-set fenv name n)
-                    (for/fold ([rfenv rfenv])
-                              ([label n1*])
-                      (hash-set rfenv label name)))])))
-     (define env (env:empty))
-     (goto n #f env kenv fenv rfenv '())])
+    [(prog ([,n1* ,f*] ...) ,blocks)
+     (nanopass-case (CPCPS CFG) blocks
+       [(cfg ([,n2* ,k*] ...) (,n3* ...))
+        (define n (car n3*))
+        (define-values (kenv fenv rfenv)
+          (for/fold ([kenv (kenv:inject n2* k*)]
+                     [fenv (hash)]
+                     [rfenv (for/hash ([label n2*]) (values label #f))])
+                    ([name n1*] [f f*])
+            (nanopass-case (CPCPS Fn) f
+              [(fn (cfg ([,n1* ,k*] ...) (,n2* ...)))
+               (define n (car n2*))
+               (values (hash-union kenv (kenv:inject n1* k*))
+                       (hash-set fenv name n)
+                       (for/fold ([rfenv rfenv])
+                                 ([label n1*])
+                         (hash-set rfenv label name)))])))
+        (define env (env:empty))
+        (goto n #f env kenv fenv rfenv '())])])
 
   (Stmt : Stmt (ir curr-fn env kenv fenv rfenv stmts transfer) -> * ()
     [(def ,n ,e) (Expr e curr-fn env kenv fenv rfenv n stmts transfer)]

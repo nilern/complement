@@ -66,8 +66,8 @@
 
     (define primapply (primops:primapply (hash-union primops:base-ops primops:denv-ops))))
 
-  (Program : Program (ir) -> * ()
-    [(prog ([,n* ,k*] ...) ,n)
+  (CFG : CFG (ir) -> * ()
+    [(cfg ([,n* ,k*] ...) ,n)
      (define env (env:empty))
      (define kenv (kenv:inject n* k*))
      (apply-label (kenv:ref kenv n) env kenv '())])
@@ -81,10 +81,12 @@
      (define res (Atom a env kenv))
      (define env* (if name (env:insert env name res) env))
      (eval-block stmts transfer env* kenv)]
-    [(fn ([,n* ,k*] ...) ,n)
-     (define f (value:$fn n* k* n env))
-     (define env* (if name (env:insert env name f) env))
-     (eval-block stmts transfer env* kenv)]
+    [(fn ,blocks)
+     (nanopass-case (CPS CFG) blocks
+       [(cfg ([,n* ,k*] ...) ,n)
+        (define f (value:$fn n* k* n env))
+        (define env* (if name (env:insert env name f) env))
+        (eval-block stmts transfer env* kenv)])]
     [(primcall ,p ,a* ...)
      (define res (primapply p (map (cute Atom <> env kenv) a*)))
      (define env* (if name (env:insert env name res) env))

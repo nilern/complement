@@ -102,8 +102,8 @@
     (const (c))
     (primop (p)))
 
-  (Program ()
-    (prog ([n* k*] ...) n))
+  (CFG (blocks)
+    (cfg ([n* k*] ...) n))
 
   (Cont (k)
     (cont (n* ...) s* ... t))
@@ -119,7 +119,7 @@
     (halt a))
 
   (Expr (e)
-    (fn ([n* k*] ...) n)
+    (fn blocks)
     (primcall p a* ...)
     a)
 
@@ -133,13 +133,17 @@
 
 (define-language CPCPS
   (extends CPS)
+  (entry Program)
 
   (Program ()
-    (- (prog ([n* k*] ...) n))
-    (+ (prog ([n1* f*] ...) ([n2* k*] ...) (n3* ...))))
+    (+ (prog ([n1* f*] ...) blocks)))
 
   (Fn (f)
-    (+ (fn ([n1* k*] ...) (n2* ...))))
+    (+ (fn blocks)))
+
+  (CFG (blocks)
+    (- (cfg ([n* k*] ...) n))
+    (+ (cfg ([n1* k*] ...) (n2* ...))))
 
   (Transfer (t)
     (- (continue x a* ...))
@@ -149,7 +153,7 @@
     (+ (if a? (x1 a1* ...) (x2 a2* ...))))
 
   (Expr (e)
-    (- (fn ([n* k*] ...) n)))
+    (- (fn blocks)))
 
   (Var (x)
     (+ (proc n))))
