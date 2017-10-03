@@ -461,7 +461,9 @@
     [(def ,n ,e)
      (Expr e label env kenv stats visited)
      (set-add env n)]
-    [,e (Expr e label env kenv stats visited)])
+    [,e
+     (Expr e label env kenv stats visited)
+     env])
 
   (Transfer : Transfer (ir label env kenv stats visited) -> * ()
     [(continue ,x ,a* ...)
