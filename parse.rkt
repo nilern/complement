@@ -15,7 +15,7 @@
    INT))
 (define-empty-tokens empty-toks
   (EOF
-   LBRACE RBRACE
+   LPAREN RPAREN LBRACE RBRACE
    SEMICOLON
    = => \|))
 
@@ -28,6 +28,8 @@
   (lexer-src-pos
     [whitespace (return-without-pos (lex input-port))] ; skip
     [(eof) 'EOF]
+    ["(" 'LPAREN]
+    [")" 'RPAREN]
     ["{" 'LBRACE]
     ["}" 'RBRACE]
     [";" 'SEMICOLON]
@@ -128,6 +130,7 @@
                         `(primcall ,$1 ,(reverse $2) ...))])
 
       (simple
+        [(LPAREN expr RPAREN) $2]
         [(LBRACE block RBRACE) $2]
         [(var) $1]
         [(datum) $1])
