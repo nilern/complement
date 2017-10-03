@@ -9,6 +9,9 @@
 (define base-ops
   (hash
     '__iEq =
+    '__iAdd +
+    '__iSub -
+    '__iMul *
     '__tupleNew vector
     '__tupleLength vector-length
     '__tupleGet vector-ref
