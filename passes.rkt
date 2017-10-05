@@ -738,7 +738,7 @@
     (visit! entry))
   rpo)
 
-;; OPTIMIZE: use worklist algorithm
+;; OPTIMIZE: use worklist algorithm or at least make sure that DAG:s only take the minimum 2 passes
 (define (cpcps-cfg-dominator-forest label-table entries)
   (define rpo (cpcps-cfg-rpo label-table entries))
   (define label-rpo-indices (for/hash ([(label i) (in-indexed rpo)])
@@ -940,3 +940,75 @@
     [(lex ,n) (hash-ref env n ir)]
     [(label ,n) ir]
     [(proc ,n) ir]))
+
+(define-pass cpcps-cfg-liveness : CPCPS (ir) -> * ()
+  (definitions
+    (define (freevars+luses prev-freevars local-freevars)
+      (values (set-union local-freevars prev-freevars)
+              (set-subtract local-freevars prev-freevars)))
+
+    (define (arglist atoms)
+      (foldl set-union (set) (map Atom atoms))))
+
+  (CFG : CFG (ir) -> * ()
+    [(cfg ([,n1* ,k*] ...) (,n2* ...))
+     (define kenv (kenv:inject n1* k*))
+     (define cont-acc (make-hash))
+     (for ([name n2*])
+       (Cont (kenv:ref kenv name) name kenv cont-acc))
+     cont-acc])
+
+  (Cont : Cont (ir name kenv cont-acc) -> * ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (unless (hash-has-key? cont-acc name)
+       (define-values (transfer-freevars transfer-luses) (Transfer t kenv cont-acc))
+       (define-values (body-freevars stmt-luses)
+         (let body ([stmts s*])
+           (match stmts
+             ['() (values transfer-freevars '())]
+             [(cons stmt stmts)
+              (let*-values ([(freevars luses) (body stmts)]
+                            [(freevars stmt-luses) (Stmt stmt freevars)])
+                (values freevars (cons stmt-luses luses)))])))
+       (hash-set! cont-acc name
+         (hash 'freevars (set-subtract body-freevars (list->set n*))
+               'stmt-last-uses stmt-luses
+               'transfer-luses transfer-luses)))])
+
+  (Stmt : Stmt (ir freevars) -> * ()
+    [(def ,n ,e)
+     (define-values (freevars* luses) (freevars+luses freevars (Expr e)))
+     (values (set-remove freevars* n) luses)]
+    [,e (freevars+luses freevars (Expr e))])
+
+  (Expr : Expr (ir) -> * ()
+    [(primcall ,p ,a* ...) (arglist a*)]
+    [,a (Atom a)])
+
+  (Transfer : Transfer (ir kenv cont-acc) -> * ()
+    [(goto ,x ,a* ...)
+     (freevars+luses (Callee x kenv cont-acc) (set-union (Var x) (arglist a*)))]
+    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
+     (freevars+luses (set-union (Callee x1 kenv cont-acc) (Callee x2 kenv cont-acc))
+                     (set-union (Atom a?) (Var x1) (arglist a1*) (Var x2) (arglist a2*)))]
+    [(halt ,a)
+     (define freevars (Atom a))
+     (values freevars freevars)])
+
+  (Atom : Atom (ir) -> * ()
+    [(const ,c) (set)]
+    [,x (Var x)])
+
+  (Var : Var (ir) -> * ()
+    [(lex ,n) (set n)]
+    [(label ,n) (set)]
+    [(proc ,n) (set)])
+
+  (Callee : Var (ir kenv cont-acc) -> * ()
+    [(lex ,n) (set)]
+    [(label ,n)
+     (Cont (kenv:ref kenv n) n kenv cont-acc)
+     (hash-ref (hash-ref cont-acc n) 'freevars)]
+    [(proc ,n) (set)])
+
+  (CFG ir))
