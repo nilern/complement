@@ -7,65 +7,39 @@
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt" "cpcps-passes.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
-  (define input (current-input-port))
+  (define passes
+    (list parse
+          alphatize
+          infer-decls
+          lex-straighten
+          introduce-dyn-env
+          add-dispatch
+          cps-convert
+          (lambda (cps) (closure-convert cps (analyze-closures cps)))
+          cpcps-shrink))
 
-  (define cst (parse input))
-  (pretty-print cst)
+  (define evals
+    (list eval-Cst
+          eval-Cst
+          #f
+          #f
+          #f
+          #f
+          eval-CPS
+          eval-CPCPS
+          eval-CPCPS))
 
-  (printf "\n===\n\n")
+  (define (main)
+    (define input (current-input-port))
+  	(for/fold ([ir input])
+              ([pass passes] [eval evals])
+      (define ir* (pass ir))
+      (pretty-print ir*)
+      (when eval
+        (display "\n---\n\n")
+        (pretty-print (eval ir*)))
+      (display "\n===\n\n")
+      ir*)
+    (void))
 
-  (define acst (alphatize cst))
-  (pretty-print acst)
-
-  (printf "\n---\n\n")
-
-  (eval-Cst acst)
-
-  (printf "\n===\n\n")
-
-  (define dcst (infer-decls acst))
-  (pretty-print dcst)
-
-  (printf "\n===\n\n")
-
-  (define ddcst (lex-straighten dcst))
-  (pretty-print ddcst)
-
-  (printf "\n===\n\n")
-
-  (define lcst (introduce-dyn-env ddcst))
-  (pretty-print lcst)
-
-  (printf "\n===\n\n")
-
-  (define ast (add-dispatch lcst))
-  (pretty-print ast)
-
-  (printf "\n===\n\n")
-
-  (define cps (cps-convert ast))
-  (pretty-print cps)
-
-  (printf "\n---\n\n")
-
-  (eval-CPS cps)
-
-  (printf "\n===\n\n")
-
-  (define cpcps
-    (let ([stats (analyze-closures cps)])
-      (closure-convert cps stats)))
-  (pretty-print cpcps)
-
-  (printf "\n---\n\n")
-
-  (eval-CPCPS cpcps)
-
-  (printf "\n===\n\n")
-
-  (define cpcps* (cpcps-shrink cpcps))
-  (pretty-print cpcps*)
-
-  (printf "\n---\n\n")
-
-  (eval-CPCPS cpcps))
+  (main))
