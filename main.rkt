@@ -7,8 +7,7 @@
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt" "cpcps-passes.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
-  (define input
-    (open-input-string (vector-ref (current-command-line-arguments) 0)))
+  (define input (current-input-port))
 
   (define cst (parse input))
   (pretty-print cst)
