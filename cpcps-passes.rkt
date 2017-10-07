@@ -293,6 +293,28 @@
 
 (define-pass cpcps-cfg-liveness : CPCPS (ir) -> * ()
   (definitions
+    (struct $luses-builder (stmt-luses transfer-luses))
+  
+    (define (make-luses-builder transfer-luses)
+      ($luses-builder '() transfer-luses))
+
+    (define (push-luses luses-builder luses)
+      (match-define ($luses-builder stmt-luses transfer-luses) luses-builder)
+      ($luses-builder (cons luses stmt-luses) transfer-luses))
+
+    (define (ensure-luses luses-builder freevars names)
+      (define (splice luses)
+        (set-union luses (set-subtract names freevars)))
+      (match luses-builder
+        [($luses-builder (cons first-luses rest-luses) transfer-luses)
+         ($luses-builder (cons (splice first-luses) rest-luses) transfer-luses)]
+        [($luses-builder '() transfer-luses)
+         ($luses-builder '() (splice transfer-luses))]))
+
+    (define (build-luses luses-builder)
+      (match-define ($luses-builder stmt-luses transfer-luses) luses-builder)
+      (values stmt-luses transfer-luses))
+  
     (define (freevars+luses prev-freevars local-freevars)
       (values (set-union local-freevars prev-freevars)
               (set-subtract local-freevars prev-freevars)))
@@ -311,25 +333,32 @@
   (Cont : Cont (ir name kenv cont-acc) -> * ()
     [(cont (,n* ...) ,s* ... ,t)
      (unless (hash-has-key? cont-acc name)
-       (define-values (transfer-freevars transfer-luses) (Transfer t kenv cont-acc))
-       (define-values (body-freevars stmt-luses)
-         (let body ([stmts s*])
-           (match stmts
-             ['() (values transfer-freevars '())]
-             [(cons stmt stmts)
-              (let*-values ([(freevars luses) (body stmts)]
-                            [(freevars stmt-luses) (Stmt stmt freevars)])
-                (values freevars (cons stmt-luses luses)))])))
-       (hash-set! cont-acc name
-         (hash 'freevars (set-subtract body-freevars (list->set n*))
-               'stmt-last-uses stmt-luses
-               'transfer-luses transfer-luses)))])
+       (let*-values ([(transfer-freevars transfer-luses) (Transfer t kenv cont-acc)]
+                     [(body-freevars luses-builder)
+                      (let body ([stmts s*])
+                        (match stmts
+                          ['() (values transfer-freevars (make-luses-builder transfer-luses))]
+                          [(cons stmt stmts)
+                           (let*-values ([(freevars luses-builder) (body stmts)]
+                                         [(freevars luses-builder)
+                                          (Stmt stmt freevars luses-builder)])
+                             (values freevars luses-builder))]))]
+                     [(params) (list->set n*)]
+                     [(stmt-luses transfer-luses)
+                      (build-luses (ensure-luses luses-builder body-freevars params))])
+         (hash-set! cont-acc name
+           (hash 'freevars (set-subtract body-freevars params)
+                 'stmt-last-uses stmt-luses
+                 'transfer-luses transfer-luses))))])
 
-  (Stmt : Stmt (ir freevars) -> * ()
+  (Stmt : Stmt (ir freevars luses-builder) -> * ()
     [(def ,n ,e)
      (define-values (freevars* luses) (freevars+luses freevars (Expr e)))
-     (values (set-remove freevars* n) luses)]
-    [,e (freevars+luses freevars (Expr e))])
+     (values (set-remove freevars* n)
+             (push-luses (ensure-luses luses-builder freevars (set n)) luses))]
+    [,e
+     (define-values (freevars* luses) (freevars+luses freevars (Expr e)))
+     (values freevars* (push-luses luses-builder luses))])
 
   (Expr : Expr (ir) -> * ()
     [(primcall ,p ,a* ...) (arglist a*)]
