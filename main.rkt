@@ -4,7 +4,8 @@
   (require racket/pretty
            nanopass/base
            "langs.rkt"
-           "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt" "cpcps-passes.rkt"
+           "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
+           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define passes
@@ -16,8 +17,9 @@
           add-dispatch
           cps-convert
           (lambda (cps) (closure-convert cps (analyze-closures cps)))
-          cpcps-shrink
-          select-instructions))
+          cpcps:select-instructions
+          cpcps:shrink
+          allocate-registers))
 
   (define evals
     (list eval-Cst
@@ -28,7 +30,8 @@
           #f
           eval-CPS
           eval-CPCPS
-          eval-CPCPS
+          #f
+          #f
           #f))
 
   (define (main)
