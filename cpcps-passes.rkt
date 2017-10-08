@@ -1,6 +1,6 @@
 #lang racket
 
-(provide cpcps-shrink)
+(provide cpcps-shrink select-instructions)
 (require data/gvector (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt" (prefix-in kenv: (submod "util.rkt" cont-env)))
@@ -391,3 +391,51 @@
     [(proc ,n) (set)])
 
   (CFG ir))
+
+(define-pass select-instructions : CPCPS (ir) -> RegisterizableCPCPS ()
+  (definitions
+    (define (varargs-primop? op)
+      (case op
+        [(__tupleNew __denvPush) #t]
+        [else #f]))
+  
+    (define (emit-stmt name expr)
+      (with-output-language (RegisterizableCPCPS Stmt)
+        (if name
+          `(def ,name ,expr)
+          expr)))
+
+    (define (emit-compound-start name op len)
+      (with-output-language (RegisterizableCPCPS Expr)
+        (case op
+          [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))]
+          ;; TODO: denv
+          )))
+
+    (define (emit-compound-step name op index atom)
+      (with-output-language (RegisterizableCPCPS Expr)
+        (case op
+          [(__tupleNew) `(primcall3 __tupleInit (lex ,name) (const ,index) ,atom)]
+          ;; TODO: denv
+          ))))
+
+  (Cont : Cont (ir) -> Cont ()
+    [(cont (,n* ...) ,s* ... ,[t])
+     (define stmt-acc (make-gvector))
+     (for ([stmt s*])
+       (Stmt stmt stmt-acc))
+     `(cont (,n* ...) ,(gvector->list stmt-acc) ... ,t)])
+
+  (Stmt : Stmt (ir stmt-acc) -> Stmt ()
+    [(def ,n ,e) (Expr e n stmt-acc)]
+    [,e (Expr e #f stmt-acc)])
+
+  (Expr : Expr (ir name stmt-acc) -> Expr ()
+    [(primcall ,p ,[a*] ...) (guard (varargs-primop? p))
+     (gvector-add! stmt-acc (emit-compound-start name p (length a*)))
+     (for ([(atom i) (in-indexed a*)])
+       (gvector-add! stmt-acc (emit-compound-step name p i atom)))]
+    [(primcall ,p) (gvector-add! stmt-acc (emit-stmt name `(primcall0 ,p)))]
+    [(primcall ,p ,[a]) (gvector-add! stmt-acc (emit-stmt name `(primcall1 ,p ,a)))]
+    [(primcall ,p ,[a1] ,[a2]) (gvector-add! stmt-acc (emit-stmt name `(primcall2 ,p ,a1 ,a2)))]
+    [(primcall ,p ,a* ...) (error "primop argc")]))

@@ -16,7 +16,8 @@
           add-dispatch
           cps-convert
           (lambda (cps) (closure-convert cps (analyze-closures cps)))
-          cpcps-shrink))
+          cpcps-shrink
+          select-instructions))
 
   (define evals
     (list eval-Cst
@@ -27,7 +28,8 @@
           #f
           eval-CPS
           eval-CPCPS
-          eval-CPCPS))
+          eval-CPCPS
+          #f))
 
   (define (main)
     (define input (current-input-port))

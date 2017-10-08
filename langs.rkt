@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -157,3 +157,13 @@
 
   (Var (x)
     (+ (proc n))))
+
+(define-language RegisterizableCPCPS
+  (extends CPCPS)
+
+  (Expr (e)
+    (- (primcall p a* ...))
+    (+ (primcall0 p))
+    (+ (primcall1 p a))
+    (+ (primcall2 p a1 a2))
+    (+ (primcall3 p a1 a2 a3))))
