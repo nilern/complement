@@ -167,5 +167,3 @@
     (+ (primcall1 p a))
     (+ (primcall2 p a1 a2))
     (+ (primcall3 p a1 a2 a3))))
-
-(define reg-number? fixnum?)
