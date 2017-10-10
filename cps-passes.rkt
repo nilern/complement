@@ -1,12 +1,12 @@
 #lang racket
 
-(provide analyze-closures closure-convert)
+(provide census analyze-closures closure-convert)
 (require data/gvector (only-in srfi/26 cute) (only-in threading ~>)
          nanopass/base
          "langs.rkt" (only-in "util.rkt" clj-group-by unzip-hash)
          (prefix-in kenv: (submod "util.rkt" cont-env)))
 
-;; TODO: use this in closure conversion and edge relaxation (which is also a TODO)
+;; TODO: use this in shrinking and edge relaxation when they appear
 (define-pass census : CPS (ir ltab vtab delta) -> * ()
   (definitions
     (define (make-var-entry) (make-hash '((uses . 0))))
@@ -28,7 +28,9 @@
           (hash-update! 'calls add-delta))))
 
   (CFG : CFG (ir) -> * ()
-    [(cfg ([,n* ,k*] ...) ,n) (for-each Cont k*)])
+    [(cfg ([,n* ,k*] ...) ,n)
+     (for-each Cont k*)
+     (escapes! ltab n)])
 
   (Cont : Cont (ir) -> * ()
     [(cont (,n* ...) ,s* ... ,t)
@@ -62,43 +64,27 @@
     [(lex ,n) (used! vtab n)]
     [(label ,n) (called! ltab n)]))
 
-(module label-table racket/base
-  (provide new call! escape! use-clover! transitively!)
-  (require racket/set (only-in srfi/26 cute) (only-in threading ~>))
-
-  (define (new) (make-hash))
-
-  (define ref! (cute hash-ref! <> <> make-hash))
-
-  (define (freevars! table label)
-    (~> (ref! table label)
-        (hash-ref! 'freevars mutable-set)))
-
-  (define (call! table label)
-    (~> (ref! table label)
-        (hash-set! 'called? #t)))
-
-  (define (escape! table label)
-    (~> (ref! table label)
-        (hash-set! 'escapes? #t)))
-
-  (define (use-clover! table label name)
-    (~> (freevars! table label)
-        (set-add! name)))
-
-  (define (transitively! table label env src-label)
-    (define freevars (freevars! table label))
-    (for ([fv (freevars! table src-label)]
-          #:when (not (set-member? env fv)))
-      (set-add! freevars fv))))
-
-(require (prefix-in ltab: (submod "." label-table)))
-
 (define-pass analyze-closures : CPS (ir) -> * ()
+  (definitions
+    (define (make-entry) (make-hash (list (cons 'freevars (mutable-set)))))
+
+    (define (freevars! table label)
+      (~> (hash-ref! table label make-entry)
+          (hash-ref 'freevars)))
+    
+    (define (use-clover! table label name)
+      (~> (freevars! table label)
+          (set-add! name)))
+  
+    (define (transitively! table label env src-label)
+      (define freevars (freevars! table label))
+      (for ([fv (freevars! table src-label)]
+            #:when (not (set-member? env fv)))
+        (set-add! freevars fv))))
+
   (CFG : CFG (ir stats visited) -> * ()
     [(cfg ([,n* ,k*] ...) ,n)
      (define kenv (kenv:inject n* k*))
-     (ltab:escape! stats n)
      (Cont (kenv:ref kenv n) n kenv stats visited)])
 
   (Cont : Cont (ir label kenv stats visited) -> * ()
@@ -137,7 +123,7 @@
     [(fn ,blocks)
      (CFG blocks stats visited)
      (nanopass-case (CPS CFG) blocks
-       [(cfg ([,n* ,k*] ...) ,n) (ltab:transitively! stats label env n)])]
+       [(cfg ([,n* ,k*] ...) ,n) (transitively! stats label env n)])]
     [(primcall ,p ,a* ...)
      (for ([aexpr a*])
        (Atom aexpr label env kenv stats visited))]
@@ -148,18 +134,17 @@
     [(const ,c) (void)])
 
   (Var : Var (ir call? label env kenv stats visited) -> * ()
-    [(lex ,n) (unless (set-member? env n) (ltab:use-clover! stats label n))]
+    [(lex ,n) (unless (set-member? env n) (use-clover! stats label n))]
     [(label ,n)
-     ((if call? ltab:call! ltab:escape!) stats n)
      (Cont (kenv:ref kenv n) n kenv stats visited)
-     (ltab:transitively! stats label env n)])
+     (transitively! stats label env n)])
 
   (let ([visited (mutable-set)]
-        [stats (ltab:new)])
+        [stats (make-hash)])
     (CFG ir stats visited)
     stats))
 
-(define-pass closure-convert : CPS (ir stats) -> CPCPS ()
+(define-pass closure-convert : CPS (ir stats ltab) -> CPCPS ()
   (definitions
     (define (fv-params env freevars)
       (for/list ([fv freevars])
@@ -206,10 +191,10 @@
 
   (Cont : Cont (ir label fn-acc cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
-     (define ltab-entry (hash-ref stats label))
-     (define freevars (hash-ref ltab-entry 'freevars))
-     (define called? (hash-has-key? ltab-entry 'called?))
-     (define escapes? (hash-has-key? ltab-entry 'escapes?))
+     (define freevars (hash-ref (hash-ref stats label) 'freevars))
+     (define ltab-entry (hash-ref ltab label))
+     (define called? (> (hash-ref ltab-entry 'calls) 0))
+     (define escapes? (> (hash-ref ltab-entry 'escapes) 0))
      (when called?
        (let* ([env (for/hash ([fv freevars]) (values fv (gensym fv)))]
               [stmt-acc (make-gvector)])

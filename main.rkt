@@ -16,7 +16,10 @@
           introduce-dyn-env
           add-dispatch
           cps-convert
-          (lambda (cps) (closure-convert cps (analyze-closures cps)))
+          (lambda (cps)
+            (let ([ltab (make-hash)] [vtab (make-hash)])
+              (census cps ltab vtab 1)
+              (closure-convert cps (analyze-closures cps) ltab)))
           cpcps:select-instructions
           cpcps:shrink
           allocate-registers))
