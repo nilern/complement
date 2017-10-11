@@ -203,18 +203,27 @@
 
 (define-pass add-dispatch : LexCst (ir) -> Ast ()
   (definitions
-    (with-output-language (Ast Expr)
-      (define (emit-cases argv cases)
+    (define (const-value expr) ; TODO: use option type for this
+      (nanopass-case (Ast Expr) expr
+        [(const ,c) (values #t c)]
+        [else (values #f expr)]))
+  
+    (define (emit-cases argv cases)
+      (with-output-language (Ast Expr)
         (match cases
           [(cons (list params cond body) cases*)
+           (define-values (condv-known? condv) (const-value cond))
            `(block ,(for/list ([(p i) (in-indexed params)])
                       (with-output-language (Ast Stmt)
                         `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
-                   ;; TODO: constant fold the branch (if possible) right away:
-                   (if ,cond ,body ,(emit-cases argv cases*)))]
-          ['() `(primcall __raise (const PreCondition))]))
+             ,(match/values (const-value cond)
+                [(#t #t) body]
+                [(#t #f) (emit-cases argv cases*)]
+                [(_ _) `(if ,cond ,body ,(emit-cases argv cases*))]))]
+          ['() `(primcall __raise (const PreCondition))])))
 
-      (define (emit-arities argv argc arities)
+    (define (emit-arities argv argc arities)
+      (with-output-language (Ast Expr)
         (match arities
           [(cons (cons arity cases) arities*)
            `(if (primcall __iEq ,argc (const ,arity))
