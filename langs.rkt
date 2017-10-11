@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS InstrCPCPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -94,8 +94,6 @@
   (Case (fc)
     (- (case (n* ...) e? e))))
 
-;;; TODO: make CFG component of programs and functions explicit
-
 (define-language CPS
   (terminals
     (name (n))
@@ -167,3 +165,10 @@
     (+ (primcall1 p a))
     (+ (primcall2 p a1 a2))
     (+ (primcall3 p a1 a2 a3))))
+
+(define-language InstrCPCPS
+  (extends RegisterizableCPCPS)
+
+  (Transfer (t)
+    (- (if a? (x1 a1* ...) (x2 a2* ...)))
+    (+ (if a? x1 x2 a* ...))))
