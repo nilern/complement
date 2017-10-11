@@ -1,12 +1,12 @@
 #lang racket
 
-(provide census analyze-closures closure-convert)
-(require data/gvector (only-in srfi/26 cute) (only-in threading ~>)
+(provide census relax-edges analyze-closures closure-convert)
+(require data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          "langs.rkt" (only-in "util.rkt" clj-group-by unzip-hash)
          (prefix-in kenv: (submod "util.rkt" cont-env)))
 
-;; TODO: use this in shrinking and edge relaxation when they appear
+;; TODO: use this in shrinking
 (define-pass census : CPS (ir ltab vtab delta) -> * ()
   (definitions
     (define (make-var-entry) (make-hash '((uses . 0))))
@@ -63,6 +63,130 @@
   (Callee : Var (ir) -> * ()
     [(lex ,n) (used! vtab n)]
     [(label ,n) (called! ltab n)]))
+
+(define-pass relax-edges : CPS (ir ltab) -> CPS ()
+  (definitions
+    (struct $cfg-builder (conts entry))
+    
+    (define (make-cfg-builder entry)
+      ($cfg-builder (make-hash) entry))
+
+    (define (visited? cfg-builder label)
+      (hash-has-key? ($cfg-builder-conts cfg-builder) label))
+
+    (define (lk-ref cfg-builder label purpose)
+      (~> ($cfg-builder-conts cfg-builder)
+          (hash-ref label)
+          (hash-ref purpose)))
+
+    (define (label-ref cfg-builder label purpose)
+      (car (lk-ref cfg-builder label purpose)))
+
+    (define (cont-ref cfg-builder label purpose)
+      (cdr (lk-ref cfg-builder label purpose)))
+
+    (define (add-cont! cfg-builder label purpose cont)
+      (define entry (~> ($cfg-builder-conts cfg-builder)
+                        (hash-ref! label make-hash)))
+      (hash-set! entry purpose (cons (if (= (hash-count entry) 0) label (gensym label))
+                                     cont)))
+
+    (define (build-cfg cfg-builder)
+      (with-output-language (CPS CFG)
+        (define-values (labels conts)
+          (for/fold ([labels '()] [conts '()])
+                    ([(_ entry) ($cfg-builder-conts cfg-builder)])
+            (define lks (hash-values entry))
+            (values (append (map car lks) labels) (append (map cdr lks) conts))))
+        `(cfg ([,labels ,conts] ...) ,($cfg-builder-entry cfg-builder))))
+
+    (define (adapter-cont label cont)
+      (with-output-language (CPS Cont)
+        (nanopass-case (CPS Cont) cont
+          [(cont (,n* ...) ,s* ... ,t)
+           `(cont (,n* ...) (continue (label ,label) (lex ,n*) ...))]))))
+
+  (CFG : CFG (ir) -> CFG ()
+    [(cfg ([,n* ,k*] ...) ,n)
+     (define kenv (kenv:inject n* k*))
+     (define cfg-builder (make-cfg-builder n))
+     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (build-cfg cfg-builder)])
+
+  (Cont : Cont (ir label kenv cfg-builder) -> Cont ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (unless (visited? cfg-builder label)
+       (define default-cont `(cont (,n* ...)
+                               ,(map (cute Stmt <> kenv cfg-builder) s*) ...
+                               ,(Transfer t kenv cfg-builder)))
+       (define ltab-entry (hash-ref ltab label))
+       (define called? (> (hash-ref ltab-entry 'calls) 0))
+       (define escapes (hash-ref ltab-entry 'escapes))
+       (define escapes? (> escapes 0))
+       (when called?
+         (add-cont! cfg-builder label 'default default-cont))
+       (when escapes?
+         (if called?
+           (begin
+             (add-cont! cfg-builder label 'escape (adapter-cont label default-cont))
+             (hash-set! ltab (label-ref cfg-builder label 'escape)
+                        (make-hash (list (cons 'calls 0) (cons 'escapes escapes))))
+             (hash-set! ltab-entry 'escapes 0))
+           (add-cont! cfg-builder label 'escape default-cont)))
+       #| NOTE: unreachable continuations get implicitly eliminated here |# )])
+
+  (Stmt : Stmt (ir kenv cfg-builder) -> Stmt ()
+    [(def ,n ,e) `(def ,n ,(Expr e kenv cfg-builder))]
+    [,e (Expr e kenv cfg-builder)])
+
+  (Expr : Expr (ir kenv cfg-builder) -> Expr ()
+    [(fn ,[blocks]) `(fn ,blocks)]
+    [(primcall ,p ,a* ...)
+     `(primcall ,p ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
+    [,a (Atom a kenv cfg-builder)])
+    
+  (Transfer : Transfer (ir kenv cfg-builder) -> Transfer ()
+    [(continue ,x ,a* ...)
+     `(continue ,(Callee x kenv cfg-builder) ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
+    [(if ,a? ,x1 ,x2)
+     `(if ,(Atom a? kenv cfg-builder)
+        ,(IfCallee x1 kenv cfg-builder)
+        ,(IfCallee x2 kenv cfg-builder))]
+    [(call ,x1 ,x2 ,a* ...)
+     `(call ,(Callee x1 kenv cfg-builder) ,(Var x2 kenv cfg-builder)
+            ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
+    [(halt ,a) `(halt ,(Atom a kenv cfg-builder))])
+
+  (Atom : Atom (ir kenv cfg-builder) -> Atom ()
+    [(const ,c) ir]
+    [,x (Var x kenv cfg-builder)])
+
+  (Var : Var (ir kenv cfg-builder) -> Atom ()
+    [(lex ,n) ir]
+    [(label ,n)
+     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     `(label ,(label-ref cfg-builder n 'escape))])
+
+  (Callee : Var (ir kenv cfg-builder) -> Var ()
+    [(lex ,n) ir]
+    [(label ,n)
+     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     `(label ,(label-ref cfg-builder n 'default))])
+
+  (IfCallee : Var (ir kenv cfg-builder) -> Var ()
+    [(lex ,n) ir]
+    [(label ,n)
+     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (if (> (hash-ref (hash-ref ltab n) 'calls) 1)
+       (begin
+         (add-cont! cfg-builder n 'critical
+                    (adapter-cont n (cont-ref cfg-builder n)))
+         (let ([label* (label-ref cfg-builder n 'critical)])
+           (hash-set! ltab label* (make-hash '((calls . 1) (escapes . 0))))
+           `(label ,label*)))
+       (begin
+         (Callee ir kenv cfg-builder)
+         `(label ,(label-ref cfg-builder n 'default))))]))
 
 (define-pass analyze-closures : CPS (ir) -> * ()
   (definitions
@@ -195,7 +319,9 @@
      (define ltab-entry (hash-ref ltab label))
      (define called? (> (hash-ref ltab-entry 'calls) 0))
      (define escapes? (> (hash-ref ltab-entry 'escapes) 0))
-     (when called?
+     (cond
+      [called?
+       (when escapes? (error (format "~s is both called and escaping" label)))
        (let* ([env (for/hash ([fv freevars]) (values fv (gensym fv)))]
               [stmt-acc (make-gvector)])
          (for ([stmt s*])
@@ -203,25 +329,19 @@
          (let ([transfer (Transfer t env stmt-acc)])
            (emit-cont! cont-acc 'lifted label `(cont (,(fv-params env freevars) ... ,n* ...)
                                                      ,(gvector->list stmt-acc) ...
-                                                     ,transfer)))))
-     (when escapes?
+                                                     ,transfer))))]
+      [escapes?
        (let ([closure (gensym label)]
-             [env (for/hash ([fv freevars]) (values fv (gensym fv)))])
-         (if called?
-           (emit-cont! cont-acc 'closed label
-             `(cont (,closure ,n* ...)
-                    ,(fv-loads closure env freevars) ...
-                    (goto (label ,label) ,(fv-lexen env freevars) ... ,n* ...)))
-           (let ([stmt-acc (make-gvector)])
-             (for ([stmt s*])
-               (Stmt stmt env fn-acc stmt-acc))
-             (let ([transfer (Transfer t env stmt-acc)])
-               (emit-cont! cont-acc 'closed label `(cont (,closure ,n* ...)
-                                                         ,(fv-loads closure env freevars) ...
-                                                         ,(gvector->list stmt-acc) ...
-                                                         ,transfer)))))))
-     ; NOTE: unreachable continuations get implicitly eliminated here
-     ])
+             [env (for/hash ([fv freevars]) (values fv (gensym fv)))]
+             [stmt-acc (make-gvector)])
+         (for ([stmt s*])
+           (Stmt stmt env fn-acc stmt-acc))
+         (let ([transfer (Transfer t env stmt-acc)])
+           (emit-cont! cont-acc 'closed label `(cont (,closure ,n* ...)
+                                                     ,(fv-loads closure env freevars) ...
+                                                     ,(gvector->list stmt-acc) ...
+                                                     ,transfer))))])
+     #| NOTE: unreachable continuations get implicitly eliminated here |# ])
 
   (Stmt : Stmt (ir env fn-acc stmt-acc) -> Stmt ()
     [(def ,n ,e) (gvector-add! stmt-acc `(def ,n ,(Expr e env fn-acc stmt-acc)))]

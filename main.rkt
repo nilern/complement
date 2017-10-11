@@ -8,6 +8,9 @@
            (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
+  (define cps-ltab (make-hash))
+  (define cps-vtab (make-hash))
+
   (define passes
     (list parse
           alphatize
@@ -17,9 +20,9 @@
           add-dispatch
           cps-convert
           (lambda (cps)
-            (let ([ltab (make-hash)] [vtab (make-hash)])
-              (census cps ltab vtab 1)
-              (closure-convert cps (analyze-closures cps) ltab)))
+            (census cps cps-ltab cps-vtab 1)
+            (relax-edges cps cps-ltab))
+          (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
           cpcps:select-instructions
           cpcps:shrink
           allocate-registers))
@@ -31,6 +34,7 @@
           #f
           #f
           #f
+          eval-CPS
           eval-CPS
           eval-CPCPS
           #f
