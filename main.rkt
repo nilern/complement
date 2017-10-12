@@ -5,7 +5,7 @@
            nanopass/base
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
-           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
+           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define cps-ltab (make-hash))
@@ -24,10 +24,9 @@
             (census cps cps-ltab cps-vtab 1)
             (relax-edges cps cps-ltab cps-vtab))
           (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
-          cpcps:select-instructions
+          cpcps:select-instructions ; TODO: move this after `cpcps:shrink`
           cpcps:shrink
-          identity
-          (cute harmonize-ifs <> register-mapping)))
+          identity))
 
   (define evals
     (list eval-Cst
@@ -43,8 +42,7 @@
           #f
           (lambda (cpcps)
             (set! register-mapping (allocate-registers cpcps))
-            register-mapping)
-          #f))
+            register-mapping)))
 
   (define (main)
     (define input (current-input-port))

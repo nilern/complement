@@ -417,9 +417,9 @@
      (define-values (x* extra-args) (Jumpee x env stmt-acc))
      `(goto ,x* ,extra-args ... ,(map (cute Atom <> env stmt-acc) a*) ...)]
     [(if ,a? ,x1 ,x2)
-     (define-values (x1* extra-args1) (Jumpee x1 env stmt-acc))
-     (define-values (x2* extra-args2) (Jumpee x2 env stmt-acc))
-     `(if ,(Atom a? env stmt-acc) (,x1* ,extra-args1 ...) (,x2* ,extra-args2 ...))]
+     (define-values (x1* _) (Jumpee x1 env stmt-acc))
+     (define-values (x2* _*) (Jumpee x2 env stmt-acc))
+     `(if ,(Atom a? env stmt-acc) ,x1* ,x2*)]
     [(call ,x1 ,x2 ,a* ...)
      (define-values (x1* extra-args) (Callee x1 env stmt-acc))
      `(goto ,x1* ,extra-args ...

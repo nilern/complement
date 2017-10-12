@@ -84,15 +84,8 @@
       [,e (Expr e)])
 
     (Transfer : Transfer (ir) -> * ()
-      [(goto ,x ,a* ...)
-       (Callee x)
-       (for ([atom a*]) (Atom atom))]
-      [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
-       (Atom a?)
-       (Callee x1)
-       (for ([atom a1*]) (Atom atom))
-       (Callee x2)
-       (for ([atom a2*]) (Atom atom))]
+      [(goto ,x ,a* ...) (Callee x) (for ([atom a*]) (Atom atom))]
+      [(if ,a? ,x1 ,x2) (Atom a?) (Callee x1) (Callee x2)]
       [(halt ,a) (Atom a)])
 
     (Expr : Expr (ir) -> * ()
@@ -138,15 +131,15 @@
       (nanopass-case (RegisterizableCPCPS Transfer) (hash-ref (hash-ref ltab caller) 'transfer)
         [(goto (label ,n) ,a* ...) (if (eq? n callee) (list a*) '())]
         [(goto ,x ,a* ...) '()]
-        [(if ,a? ((label ,n1) ,a1* ...) ((label ,n2) ,a2* ...))
+        [(if ,a? (label ,n1) (label ,n2))
          (if (eq? n1 callee)
-           (if (eq? n2 callee) (list a1* a2*) (list a1*))
-           (if (eq? n2 callee) (list a2*) '()))]
-        [(if ,a? ((label ,n1) ,a1* ...) (,x2 ,a2* ...))
-         (if (eq? n1 callee) (list a1*) '())]
-        [(if ,a? (,x1 ,a1* ...) ((label ,n2) ,a2* ...))
-         (if (eq? n2 callee) (list a2*) '())]
-        [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...)) '()]
+           (if (eq? n2 callee) (list '() '()) (list '()))
+           (if (eq? n2 callee) (list '()) '()))]
+        [(if ,a? (label ,n1) ,x2)
+         (if (eq? n1 callee) (list '()) '())]
+        [(if ,a? ,x1 (label ,n2))
+         (if (eq? n2 callee) (list '()) '())]
+        [(if ,a? ,x1 ,x2) '()]
         [(halt ,a) '()]))
 
     (define (join-atoms atoms)
@@ -223,20 +216,17 @@
 
   (Transfer : Transfer (ir env) -> Transfer ()
     [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
-    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
-     `(if ,(Atom a? env)
-        (,(Var x1 env) ,(map (cute Atom <> env) a1*) ...)
-        (,(Var x2 env) ,(map (cute Atom <> env) a2*) ...))]
+    [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))]
     [(halt ,a) `(halt ,(Atom a env))])
 
   (ShrinkTransfer : Transfer (ir label keep-indices) -> Transfer ()
     [(goto ,x ,a* ...)
      (define-values (callee args) (shrink-call label keep-indices x a*))
      `(goto ,callee ,args ...)]
-    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
-     (define-values (callee1 args1) (shrink-call label keep-indices x1 a1*))
-     (define-values (callee2 args2) (shrink-call label keep-indices x2 a2*))
-     `(if ,a? (,callee1 ,args1 ...) (,callee2 ,args2 ...))]
+    [(if ,a? ,x1 ,x2)
+     (define-values (callee1 _) (shrink-call label keep-indices x1 '()))
+     (define-values (callee2 _*) (shrink-call label keep-indices x2 '()))
+     `(if ,a? ,callee1 ,callee2)]
     [(halt ,a) ir])
 
   (Expr : Expr (ir name env stmt-acc) -> Expr ()

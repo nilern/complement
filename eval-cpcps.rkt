@@ -88,13 +88,12 @@
     [(goto ,x ,a* ...)
      (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv
            (map (cute Atom <> env kenv fenv) a*))]
-    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
-     (define-values (x a*)
+    [(if ,a? ,x1 ,x2)
+     (define x
        (match (Atom a? env kenv fenv)
-         [#t (values x1 a1*)]
-         [#f (values x2 a2*)]))
-     (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv
-           (map (cute Atom <> env kenv fenv) a*))]
+         [#t x1]
+         [#f x2]))
+     (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv '())]
     [(halt ,a) (Atom a env kenv fenv)])
 
   (Atom : Atom (ir env kenv fenv) -> * ()

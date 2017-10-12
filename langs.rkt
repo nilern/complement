@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS InstrCPCPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -133,7 +133,7 @@
   (extends CPS)
   (entry Program)
 
-  (Program ()
+  (Program () ; TODO: (prog ([n* f*] ...) n) ; n = entry label
     (+ (prog ([n1* f*] ...) blocks)))
 
   (Fn (f)
@@ -145,10 +145,8 @@
 
   (Transfer (t)
     (- (continue x a* ...))
-    (- (if a? x1 x2))
     (- (call x1 x2 a* ...))
-    (+ (goto x a* ...))
-    (+ (if a? (x1 a1* ...) (x2 a2* ...))))
+    (+ (goto x a* ...)))
 
   (Expr (e)
     (- (fn blocks)))
@@ -165,10 +163,3 @@
     (+ (primcall1 p a))
     (+ (primcall2 p a1 a2))
     (+ (primcall3 p a1 a2 a3))))
-
-(define-language InstrCPCPS
-  (extends RegisterizableCPCPS)
-
-  (Transfer (t)
-    (- (if a? (x1 a1* ...) (x2 a2* ...)))
-    (+ (if a? x1 x2 a* ...))))

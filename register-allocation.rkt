@@ -87,9 +87,9 @@
   (Transfer : Transfer (ir kenv cont-acc) -> * ()
     [(goto ,x ,a* ...)
      (freevars+luses (Callee x kenv cont-acc) (set-union (Var x) (arglist a*)))]
-    [(if ,a? (,x1 ,a1* ...) (,x2 ,a2* ...))
+    [(if ,a? ,x1 ,x2)
      (freevars+luses (set-union (Callee x1 kenv cont-acc) (Callee x2 kenv cont-acc))
-                     (set-union (Atom a?) (Var x1) (arglist a1*) (Var x2) (arglist a2*)))]
+                     (set-union (Atom a?) (Var x1) (Var x2)))]
     [(halt ,a)
      (define freevars (Atom a))
      (values freevars freevars)])
