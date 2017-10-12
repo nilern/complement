@@ -1,9 +1,9 @@
 #lang racket
 
-(provide select-instructions cfg-rpo shrink)
+(provide select-instructions shrink)
 (require data/gvector (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt" (prefix-in kenv: (submod "util.rkt" cont-env)))
+         "langs.rkt" (prefix-in cfg: "cfg.rkt") (prefix-in kenv: (submod "util.rkt" cont-env)))
          
 (define-pass select-instructions : CPCPS (ir) -> RegisterizableCPCPS ()
   (definitions
@@ -126,19 +126,6 @@
       (escapes! ltab entry))
     ltab))
 
-(define (cfg-rpo label-table entries)
-  (define visited (mutable-set))
-  (define rpo '())
-  (define (visit! label)
-    (unless (set-member? visited label)
-      (set-add! visited label)
-      (for ([succ (hash-ref (hash-ref label-table label) 'callees)])
-        (visit! succ))
-      (set! rpo (cons label rpo))))
-  (for ([entry entries])
-    (visit! entry))
-  rpo)
-
 (require (prefix-in ltab: (submod "." label-table)))
 
 (define-pass shrink : RegisterizableCPCPS (ir) -> RegisterizableCPCPS ()
@@ -203,7 +190,7 @@
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (ltab:make n1* k* n2*))
      (define kenv (kenv:inject n1* k*))
-     (for ([label (cfg-rpo ltab n2*)])
+     (for ([label (cfg:reverse-postorder ltab n2*)])
        (Cont (kenv:ref kenv label) label ltab))
      (define-values (rlabels rconts)
        (with-output-language (RegisterizableCPCPS Cont)

@@ -22,7 +22,7 @@
           cps-convert
           (lambda (cps)
             (census cps cps-ltab cps-vtab 1)
-            (relax-edges cps cps-ltab))
+            (relax-edges cps cps-ltab cps-vtab))
           (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
           cpcps:select-instructions
           cpcps:shrink

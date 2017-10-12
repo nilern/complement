@@ -1,7 +1,7 @@
-#lang racket
+#lang racket/base
 
 (provide census relax-edges analyze-closures closure-convert)
-(require data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
+(require racket/match racket/set data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          "langs.rkt" (only-in "util.rkt" clj-group-by unzip-hash)
          (prefix-in kenv: (submod "util.rkt" cont-env)))
@@ -64,7 +64,7 @@
     [(lex ,n) (used! vtab n)]
     [(label ,n) (called! ltab n)]))
 
-(define-pass relax-edges : CPS (ir ltab) -> CPS ()
+(define-pass relax-edges : CPS (ir ltab vtab) -> CPS ()
   (definitions
     (struct $cfg-builder (conts entry))
     
@@ -98,13 +98,19 @@
                     ([(_ entry) ($cfg-builder-conts cfg-builder)])
             (define lks (hash-values entry))
             (values (append (map car lks) labels) (append (map cdr lks) conts))))
+        (for ([label labels])
+          (let ([ltab-entry (hash-ref ltab label)])
+            (hash-set! ltab-entry 'if-owned? (hash-has-key? ltab-entry 'if-owned?))))
         `(cfg ([,labels ,conts] ...) ,($cfg-builder-entry cfg-builder))))
 
     (define (adapter-cont label cont)
       (with-output-language (CPS Cont)
         (nanopass-case (CPS Cont) cont
           [(cont (,n* ...) ,s* ... ,t)
-           `(cont (,n* ...) (continue (label ,label) (lex ,n*) ...))]))))
+           (define params (map gensym n*))
+           (for ([param params])
+             (hash-set! vtab param (make-hash '((uses . 0)))))
+           `(cont (,params ...) (continue (label ,label) (lex ,params) ...))]))))
 
   (CFG : CFG (ir) -> CFG ()
     [(cfg ([,n* ,k*] ...) ,n)
@@ -182,10 +188,11 @@
          (add-cont! cfg-builder n 'critical
                     (adapter-cont n (cont-ref cfg-builder n)))
          (let ([label* (label-ref cfg-builder n 'critical)])
-           (hash-set! ltab label* (make-hash '((calls . 1) (escapes . 0))))
+           (hash-set! ltab label* (make-hash '((calls . 1) (escapes . 0) (if-owned? . #t))))
            `(label ,label*)))
        (begin
          (Callee ir kenv cfg-builder)
+         (hash-set! (hash-ref ltab n) 'if-owned? #t)
          `(label ,(label-ref cfg-builder n 'default))))]))
 
 (define-pass analyze-closures : CPS (ir) -> * ()
@@ -268,6 +275,7 @@
     (CFG ir stats visited)
     stats))
 
+;; FIXME: Clover names are lost in entry successors. Use dominator forest to fix that.
 (define-pass closure-convert : CPS (ir stats ltab) -> CPCPS ()
   (definitions
     (define (fv-params env freevars)
@@ -291,9 +299,9 @@
 
     (define (emit-cont! cont-acc interface label cont)
       (match-define ($cont-acc conts entry return-points) cont-acc)
-      (define label* (match interface
-                       ['lifted label]
-                       ['closed
+      (define label* (case interface
+                       [(lifted dominated) label]
+                       [(closed)
                         (unless (eq? label entry) (set-add! return-points label))
                         (gensym label)]))
       (hash-set! conts label cont)
@@ -308,6 +316,18 @@
 
   (CFG : CFG (ir fn-acc) -> Program ()
     [(cfg ([,n* ,k*] ...) ,n)
+     #|(define cfg-edges (make-cfg n1* k* n2*))
+     (define rpo (cfg:reverse-postorder cfg-edges n2*))
+     (define dom-forest (cfg:dominator-forest cfg-edges rpo n2*))
+     (define kenv (kenv:inject n1* k*))
+     (define cont-acc (make-cont-acc n))
+     (for ([entry n2*])
+       (let loop ([dom-tree (hash-ref dom-forest entry)] [env (hash)])
+         (match-define (cons label children) dom-tree)
+         (define env* (Cont (kenv:ref kenv label) label env fn-acc cont-acc))
+         (for ([child children])
+           (loop child env*))))])|#
+
      (define cont-acc (make-cont-acc n))
      (for ([label n*] [cont k*])
        (Cont cont label fn-acc cont-acc))
@@ -322,14 +342,19 @@
      (cond
       [called?
        (when escapes? (error (format "~s is both called and escaping" label)))
-       (let* ([env (for/hash ([fv freevars]) (values fv (gensym fv)))]
+       (define if-owned? (hash-ref ltab-entry 'if-owned?))
+       (let* ([env (if if-owned? (hash) (for/hash ([fv freevars]) (values fv (gensym fv))))]
               [stmt-acc (make-gvector)])
          (for ([stmt s*])
            (Stmt stmt env fn-acc stmt-acc))
          (let ([transfer (Transfer t env stmt-acc)])
-           (emit-cont! cont-acc 'lifted label `(cont (,(fv-params env freevars) ... ,n* ...)
-                                                     ,(gvector->list stmt-acc) ...
-                                                     ,transfer))))]
+           (if if-owned?
+             (emit-cont! cont-acc 'dominated label `(cont (,n* ...)
+                                                      ,(gvector->list stmt-acc) ...
+                                                      ,transfer))
+             (emit-cont! cont-acc 'lifted label `(cont (,(fv-params env freevars) ... ,n* ...)
+                                                   ,(gvector->list stmt-acc) ...
+                                                   ,transfer)))))]
       [escapes?
        (let ([closure (gensym label)]
              [env (for/hash ([fv freevars]) (values fv (gensym fv)))]
@@ -404,8 +429,10 @@
                               `(def ,codeptr (primcall __contCode (lex ,(hash-ref env n n))))))
      (values `(lex ,codeptr) (list `(lex ,(hash-ref env n n))))]
     [(label ,n)
-     (define freevars (hash-ref (hash-ref stats n) 'freevars))
-     (values `(label ,n) (fv-lexen env freevars))])
+     (values `(label ,n)
+             (if (hash-ref (hash-ref ltab n) 'if-owned?)
+               '()
+               (fv-lexen env (hash-ref (hash-ref stats n) 'freevars))))])
 
   (let*-values ([(fn-acc) (make-hash)]
                 [(cfg) (CFG ir fn-acc)]
