@@ -1,7 +1,8 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS)
+         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
+         RegCPCPS-Atom=? RegCPCPS-Atom-hash)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -163,3 +164,46 @@
     (+ (primcall1 p a))
     (+ (primcall2 p a1 a2))
     (+ (primcall3 p a1 a2 a3))))
+
+(define index? fixnum?)
+
+(define-language RegCPCPS
+  (extends RegisterizableCPCPS)
+
+  (terminals
+    (+ (index (i))))
+
+  (Cont (k)
+    (- (cont (n* ...) s* ... t))
+    (+ (cont ([n* i*] ...) s* ... t)))
+
+  (Stmt (s)
+    (- (def n e))
+    (+ (def (n i) e)))
+
+  (Var (x)
+    (- (lex n))
+    (+ (reg i))))
+
+(define (RegCPCPS-Atom-deconstruct atom)
+  (nanopass-case (RegCPCPS Atom) atom
+    [(const ,c) (values 0 c)]
+    [(reg ,i)   (values 1 i)]
+    [(label ,n) (values 2 n)]
+    [(proc ,n)  (values 3 n)]))
+
+(define (RegCPCPS-Atom=? atom1 atom2)
+  (define-values (tag1 repr1) (RegCPCPS-Atom-deconstruct atom1))
+  (define-values (tag2 repr2) (RegCPCPS-Atom-deconstruct atom2))
+  (and (equal? tag1 tag2) (equal? repr1 repr2)))
+
+(define (RegCPCPS-Atom-hash atom)
+  (define-values (tag repr) (RegCPCPS-Atom-deconstruct atom))
+  (+ tag (equal-hash-code repr)))
+
+(define-language InstrCPCPS
+  (extends RegCPCPS)
+
+  (Transfer (t)
+    (- (goto x a* ...))
+    (+ (goto x))))

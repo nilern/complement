@@ -10,7 +10,6 @@
 
   (define cps-ltab (make-hash))
   (define cps-vtab (make-hash))
-  (define register-mapping #f)
 
   (define passes
     (list parse
@@ -26,7 +25,7 @@
           (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
           cpcps:select-instructions ; TODO: move this after `cpcps:shrink`
           cpcps:shrink
-          identity))
+          allocate-registers))
 
   (define evals
     (list eval-Cst
@@ -40,9 +39,7 @@
           eval-CPCPS
           #f
           #f
-          (lambda (cpcps)
-            (set! register-mapping (allocate-registers cpcps))
-            register-mapping)))
+          #f))
 
   (define (main)
     (define input (current-input-port))

@@ -113,7 +113,7 @@
   (CFG ir))
 
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
-(define-pass allocate-registers : RegisterizableCPCPS (ir) -> * ()
+(define-pass allocate-registers : RegisterizableCPCPS (ir) -> RegCPCPS ()
   (definitions
     (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
   
@@ -150,21 +150,12 @@
       (for ([name names])
         (pool-push! reg-pool (hash-ref env name)))))
 
-  (Program : Program (ir) -> * ()
-    [(prog ([,n* ,f*] ...) ,blocks)
-     (define env (make-hash))
-     (CFG blocks env)
-     (for ([f f*]) (Fn f env))
-     env])
-
-  (Fn : Fn (ir env) -> * ()
-    [(fn ,blocks) (CFG blocks env)])
-
-  (CFG : CFG (ir env) -> * ()
+  (CFG : CFG (ir) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (ltab:make n1* k* n2*))
      (define dom-forest (cfg:dominator-forest ltab (cfg:reverse-postorder ltab n2*) n2*))
      (define liveness (cfg-liveness ir))
+     (define env (make-hash))
      (define kenv (kenv:inject n1* k*))
      (define cont-acc (make-hash))
      (for ([entry n2*])
@@ -172,24 +163,60 @@
          (match-define (cons label children) dom-tree)
          (Cont (kenv:ref kenv label) label env ltab liveness cont-acc)
          (for ([child children])
-           (loop child))))])
+           (loop child))))
+     (define-values (labels conts) (unzip-hash cont-acc))
+     `(cfg ([,labels ,conts] ...) (,n2* ...))])
 
-  (Cont : Cont (ir label env ltab liveness cont-acc) -> * ()
+  (Cont : Cont (ir label env ltab liveness cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
      (unless (hash-has-key? cont-acc label)
        (define cont-liveness (hash-ref liveness label))
        (define reg-pool (make-reg-pool))
-       (for ([freevar (hash-ref cont-liveness 'freevars)])
-         (preallocate! reg-pool (hash-ref env freevar)))
-       (when (hash-ref (hash-ref ltab label) 'escapes?)
-         (for ([(param i) (in-indexed n*)])
-           (preallocate! reg-pool i)
-           (hash-set! env param i)))
-       (for ([stmt s*] [luses (hash-ref cont-liveness 'stmt-last-uses)])
-         (Stmt stmt env reg-pool luses)))])
+       (define param-regs
+         (if (hash-ref (hash-ref ltab label) 'escapes?)
+           (for/list ([(param i) (in-indexed n*)])
+             (preallocate! reg-pool i)
+             (hash-set! env param i)
+             i)
+           (begin
+             (for ([freevar (hash-ref cont-liveness 'freevars)])
+               (preallocate! reg-pool (hash-ref env freevar)))
+             (for/list ([param n*])
+               (define reg (allocate! reg-pool))
+               (hash-set! env param reg)
+               reg))))
+       (define stmts
+         (for/list ([stmt s*] [luses (hash-ref cont-liveness 'stmt-last-uses)])
+           (Stmt stmt env reg-pool luses)))
+       (define transfer (Transfer t env))
+       (hash-set! cont-acc label `(cont ([,n* ,param-regs] ...) ,stmts ... ,transfer)))])
 
-  (Stmt : Stmt (ir env reg-pool luses) -> * ()
+  (Stmt : Stmt (ir env reg-pool luses) -> Stmt ()
     [(def ,n ,e)
      (deallocate! reg-pool env luses)
-     (hash-set! env n (allocate! reg-pool))]
-    [,e (deallocate! reg-pool env luses)]))
+     (define reg (allocate! reg-pool))
+     (hash-set! env n reg)
+     `(def (,n ,reg) ,(Expr e env))]
+    [,e
+     (deallocate! reg-pool env luses)
+     (Expr e env)])
+
+  (Expr : Expr (ir env) -> Expr ()
+    [(primcall0 ,p)             `(primcall0 ,p)]
+    [(primcall1 ,p ,a)          `(primcall1 ,p ,(Atom a env))]
+    [(primcall2 ,p ,a1 ,a2)     `(primcall2 ,p ,(Atom a1 env) ,(Atom a2 env))]
+    [(primcall3 ,p ,a1, a2, a3) `(primcall3 ,p ,(Atom a1 env) ,(Atom a2 env) ,(Atom a3 env))]
+    [,a (Atom a env)])
+
+  (Transfer : Transfer (ir env) -> Transfer ()
+    [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+    [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
+
+  (Atom : Atom (ir env) -> Atom ()
+    [(const ,c) `(const ,c)]
+    [,x (Var x env)])
+
+  (Var : Var (ir env) -> Var ()
+    [(lex ,n) `(reg ,(hash-ref env n))]
+    [(label ,n) `(label ,n)]
+    [(proc ,n) `(proc ,n)]))
