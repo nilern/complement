@@ -1,7 +1,7 @@
-#lang racket
+#lang racket/base
 
 (provide cps-convert)
-(require data/gvector (only-in srfi/26 cute)
+(require racket/match data/gvector (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt")
 

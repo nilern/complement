@@ -112,44 +112,48 @@
 
   (CFG ir))
 
+(module reg-pool racket/base
+  (provide make preallocate! allocate! deallocate!)
+  (require racket/match racket/list (only-in srfi/26 cute))
+
+  (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
+
+  (define (make) ($reg-pool '() 0))
+
+  (define (push! reg-pool reg)
+    (set-$reg-pool-stack! reg-pool (cons reg ($reg-pool-stack reg-pool))))
+
+  (define (pop! reg-pool)
+    (match-define (cons reg stack*) ($reg-pool-stack reg-pool))
+    (set-$reg-pool-stack! reg-pool stack*)
+    reg)
+
+  (define (grow! reg-pool target-capacity)
+    (for ([reg (in-range ($reg-pool-capacity reg-pool) target-capacity)])
+      (push! reg-pool reg))
+    (set-$reg-pool-capacity! reg-pool target-capacity))
+
+  (define (preallocate! reg-pool reg)
+    (unless (< reg ($reg-pool-capacity reg-pool))
+      (grow! reg-pool (+ reg 1)))
+    (let ([stack ($reg-pool-stack reg-pool)])
+      (if (memq reg stack)
+        (set-$reg-pool-stack! reg-pool (filter-not (cute eq? <> reg) stack))
+        (error (format "unable to preallocate ~s" reg)))))
+
+  (define (allocate! reg-pool)
+    (when (null? ($reg-pool-stack reg-pool))
+      (grow! reg-pool (+ ($reg-pool-capacity reg-pool) 1)))
+    (pop! reg-pool))
+
+  (define (deallocate! reg-pool env names)
+    (for ([name names])
+      (push! reg-pool (hash-ref env name)))))
+
+(require (prefix-in reg-pool: (submod "." reg-pool)))
+
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
 (define-pass allocate-registers : RegisterizableCPCPS (ir) -> RegCPCPS ()
-  (definitions
-    (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
-  
-    (define (make-reg-pool)
-      ($reg-pool '() 0))
-
-    (define (pool-push! reg-pool reg)
-      (set-$reg-pool-stack! reg-pool (cons reg ($reg-pool-stack reg-pool))))
-
-    (define (pool-pop! reg-pool)
-      (match-define (cons reg stack*) ($reg-pool-stack reg-pool))
-      (set-$reg-pool-stack! reg-pool stack*)
-      reg)
-
-    (define (grow-pool! reg-pool target-capacity)
-      (for ([reg (in-range ($reg-pool-capacity reg-pool) target-capacity)])
-        (pool-push! reg-pool reg))
-      (set-$reg-pool-capacity! reg-pool target-capacity))
-
-    (define (preallocate! reg-pool reg)
-      (unless (< reg ($reg-pool-capacity reg-pool))
-        (grow-pool! reg-pool (+ reg 1)))
-      (let ([stack ($reg-pool-stack reg-pool)])
-        (if (memq reg stack)
-          (set-$reg-pool-stack! reg-pool (filter-not (cute eq? <> reg) stack))
-          (error (format "unable to preallocate ~s" reg)))))
-
-    (define (allocate! reg-pool)
-      (when (null? ($reg-pool-stack reg-pool))
-        (grow-pool! reg-pool (+ ($reg-pool-capacity reg-pool) 1)))
-      (pool-pop! reg-pool))
-
-    (define (deallocate! reg-pool env names)
-      (for ([name names])
-        (pool-push! reg-pool (hash-ref env name)))))
-
   (CFG : CFG (ir) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (ltab:make n1* k* n2*))
@@ -171,34 +175,34 @@
     [(cont (,n* ...) ,s* ... ,t)
      (unless (hash-has-key? cont-acc label)
        (define cont-liveness (hash-ref liveness label))
-       (define reg-pool (make-reg-pool))
+       (define reg-pool (reg-pool:make))
        (define param-regs
          (if (hash-ref (hash-ref ltab label) 'escapes?)
            (for/list ([(param i) (in-indexed n*)])
-             (preallocate! reg-pool i)
+             (reg-pool:preallocate! reg-pool i)
              (hash-set! env param i)
              i)
            (begin
              (for ([freevar (hash-ref cont-liveness 'freevars)])
-               (preallocate! reg-pool (hash-ref env freevar)))
+               (reg-pool:preallocate! reg-pool (hash-ref env freevar)))
              (for/list ([param n*])
-               (define reg (allocate! reg-pool))
+               (define reg (reg-pool:allocate! reg-pool))
                (hash-set! env param reg)
                reg))))
        (define stmts
          (for/list ([stmt s*] [luses (hash-ref cont-liveness 'stmt-last-uses)])
            (Stmt stmt env reg-pool luses)))
-       (define transfer (Transfer t env))
+       (define transfer (Transfer t env reg-pool (hash-ref cont-liveness 'transfer-luses)))
        (hash-set! cont-acc label `(cont ([,n* ,param-regs] ...) ,stmts ... ,transfer)))])
 
   (Stmt : Stmt (ir env reg-pool luses) -> Stmt ()
     [(def ,n ,e)
-     (deallocate! reg-pool env luses)
-     (define reg (allocate! reg-pool))
+     (reg-pool:deallocate! reg-pool env luses)
+     (define reg (reg-pool:allocate! reg-pool))
      (hash-set! env n reg)
      `(def (,n ,reg) ,(Expr e env))]
     [,e
-     (deallocate! reg-pool env luses)
+     (reg-pool:deallocate! reg-pool env luses)
      (Expr e env)])
 
   (Expr : Expr (ir env) -> Expr ()
@@ -208,9 +212,13 @@
     [(primcall3 ,p ,a1, a2, a3) `(primcall3 ,p ,(Atom a1 env) ,(Atom a2 env) ,(Atom a3 env))]
     [,a (Atom a env)])
 
-  (Transfer : Transfer (ir env) -> Transfer ()
-    [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
-    [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
+  (Transfer : Transfer (ir env reg-pool luses) -> Transfer ()
+    [(goto ,x ,a* ...)
+     (reg-pool:deallocate! reg-pool env luses)
+     `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+    [(if ,a? ,x1 ,x2)
+     (reg-pool:deallocate! reg-pool env luses)
+     `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
 
   (Atom : Atom (ir env) -> Atom ()
     [(const ,c) `(const ,c)]

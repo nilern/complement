@@ -1,6 +1,6 @@
-#lang racket
+#lang racket/base
 
-(require racket/match
+(require racket/match racket/list (only-in racket/function negate)
          parser-tools/lex
          (prefix-in : parser-tools/lex-sre)
          parser-tools/yacc

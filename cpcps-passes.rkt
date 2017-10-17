@@ -1,7 +1,7 @@
-#lang racket
+#lang racket/base
 
 (provide select-instructions shrink)
-(require data/gvector (only-in srfi/26 cute)
+(require racket/match racket/list racket/set data/gvector (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt" (prefix-in cfg: "cfg.rkt") (prefix-in kenv: (submod "util.rkt" cont-env)))
          

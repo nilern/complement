@@ -1,7 +1,7 @@
 #lang racket/base
 
 (module+ main
-  (require (only-in racket/function identity) racket/pretty (only-in srfi/26 cute)
+  (require (only-in racket/function identity) racket/pretty
            nanopass/base
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"

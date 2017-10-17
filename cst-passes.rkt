@@ -1,7 +1,8 @@
-#lang racket
+#lang racket/base
 
 (provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch)
-(require racket/hash (only-in srfi/26 cute) (only-in threading ~>>)
+(require racket/match racket/list racket/hash (only-in srfi/26 cute) (only-in threading ~>>)
+         (only-in racket/function identity)
          nanopass/base
          "langs.rkt" (only-in "util.rkt" clj-group-by))
 

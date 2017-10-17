@@ -333,13 +333,9 @@
 
     (define (emit-cont! cont-acc interface label cont)
       (match-define ($cont-acc conts entry return-points) cont-acc)
-      (define label* (case interface
-                       [(lifted dominated) label]
-                       [(closed)
-                        (unless (eq? label entry) (set-add! return-points label))
-                        (gensym label)]))
-      (hash-set! conts label cont)
-      (hash-set! (hash-ref stats label) interface label))
+      (when (and (eq? interface 'closed) (not (eq? label entry)))
+        (set-add! return-points label))
+      (hash-set! conts label cont))
 
     (define build-cfg
       (with-output-language (CPCPS CFG)
@@ -447,10 +443,9 @@
     [(label ,n)
      (define cont (gensym n))
      (define ltab-entry (hash-ref stats n))
-     (define label (hash-ref ltab-entry 'closed))
      (define freevars (hash-ref ltab-entry 'freevars))
      (gvector-add! stmt-acc (with-output-language (CPCPS Stmt)
-                              `(def ,cont (primcall __contNew (label ,label)
+                              `(def ,cont (primcall __contNew (label ,n)
                                                               ,(fv-lexen env freevars) ...))))
      `(lex ,cont)])
 
