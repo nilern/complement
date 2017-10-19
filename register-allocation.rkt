@@ -113,7 +113,7 @@
   (CFG ir))
 
 (module reg-pool racket/base
-  (provide make preallocate! allocate! deallocate!)
+  (provide make preallocate! allocate! deallocate! deallocate-luses!)
   (require racket/match racket/list (only-in srfi/26 cute))
 
   (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
@@ -146,19 +146,30 @@
       (grow! reg-pool (+ ($reg-pool-capacity reg-pool) 1)))
     (pop! reg-pool))
 
-  (define (deallocate! reg-pool env names)
-    (for ([name names])
+  (define deallocate! push!)
+
+  (define (deallocate-luses! reg-pool env luses)
+    (for ([name luses])
       (push! reg-pool (hash-ref env name)))))
 
 (require (prefix-in reg-pool: (submod "." reg-pool)))
 
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
-(define-pass allocate-registers : RegisterizableCPCPS (ir) -> RegCPCPS ()
-  (CFG : CFG (ir) -> CFG ()
+(define-pass allocate-registers : RegisterizableCPCPS (ir global-liveness global-dom-forests) -> RegCPCPS ()
+  (Program : Program (ir) -> Program ()
+    [(prog ([,n* ,f*] ...) ,blocks)
+     `(prog ([,n* ,(map (cute Fn <> <>) f* n*)] ...) ,(CFG blocks #t))])
+
+  (Fn : Fn (ir name) -> Fn ()
+    [(fn ,blocks) `(fn ,(CFG blocks name))])
+
+  (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (ltab:make n1* k* n2*))
      (define dom-forest (cfg:dominator-forest ltab (cfg:reverse-postorder ltab n2*) n2*))
+     (hash-set! global-dom-forests name dom-forest) ; HACK
      (define liveness (cfg-liveness ir))
+     (hash-set! global-liveness name liveness) ; HACK
      (define env (make-hash))
      (define kenv (kenv:inject n1* k*))
      (define cont-acc (make-hash))
@@ -192,17 +203,17 @@
        (define stmts
          (for/list ([stmt s*] [luses (hash-ref cont-liveness 'stmt-last-uses)])
            (Stmt stmt env reg-pool luses)))
-       (define transfer (Transfer t env reg-pool (hash-ref cont-liveness 'transfer-luses)))
+       (define transfer (Transfer t env))
        (hash-set! cont-acc label `(cont ([,n* ,param-regs] ...) ,stmts ... ,transfer)))])
 
   (Stmt : Stmt (ir env reg-pool luses) -> Stmt ()
     [(def ,n ,e)
-     (reg-pool:deallocate! reg-pool env luses)
+     (reg-pool:deallocate-luses! reg-pool env luses)
      (define reg (reg-pool:allocate! reg-pool))
      (hash-set! env n reg)
      `(def (,n ,reg) ,(Expr e env))]
     [,e
-     (reg-pool:deallocate! reg-pool env luses)
+     (reg-pool:deallocate-luses! reg-pool env luses)
      (Expr e env)])
 
   (Expr : Expr (ir env) -> Expr ()
@@ -212,13 +223,10 @@
     [(primcall3 ,p ,a1, a2, a3) `(primcall3 ,p ,(Atom a1 env) ,(Atom a2 env) ,(Atom a3 env))]
     [,a (Atom a env)])
 
-  (Transfer : Transfer (ir env reg-pool luses) -> Transfer ()
-    [(goto ,x ,a* ...)
-     (reg-pool:deallocate! reg-pool env luses)
-     `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
-    [(if ,a? ,x1 ,x2)
-     (reg-pool:deallocate! reg-pool env luses)
-     `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
+  ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
+  (Transfer : Transfer (ir env) -> Transfer ()
+    [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+    [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
 
   (Atom : Atom (ir env) -> Atom ()
     [(const ,c) `(const ,c)]

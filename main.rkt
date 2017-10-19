@@ -1,15 +1,17 @@
 #lang racket/base
 
 (module+ main
-  (require (only-in racket/function identity) racket/pretty
+  (require (only-in racket/function identity) (only-in srfi/26 cute) racket/pretty
            nanopass/base
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
-           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt"
+           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define cps-ltab (make-hash))
   (define cps-vtab (make-hash))
+  (define liveness (make-hash))
+  (define dom-forests (make-hash))
 
   (define passes
     (list parse
@@ -25,7 +27,8 @@
           (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
           cpcps:select-instructions ; TODO: move this after `cpcps:shrink`
           cpcps:shrink
-          allocate-registers))
+          (cute allocate-registers <> liveness dom-forests)
+          (cute schedule-moves <> liveness dom-forests)))
 
   (define evals
     (list eval-Cst
@@ -37,6 +40,7 @@
           eval-CPS
           eval-CPS
           eval-CPCPS
+          #f
           #f
           #f
           #f))

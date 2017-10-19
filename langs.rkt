@@ -129,7 +129,8 @@
   (Var (x)
     (lex n)
     (label n)))
-
+    
+;; TODO: (prog ([n* f*]) n), also merging CFG and Fn
 (define-language CPCPS
   (extends CPS)
   (entry Program)

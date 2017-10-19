@@ -1,6 +1,7 @@
 #lang racket/base
 
-(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by)
+(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by
+         if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
 (struct exn:unbound exn:fail ())
@@ -29,6 +30,33 @@
       (hash-update groups (f v) (cute cons v <>) '())))
   (for/hash ([(k v) groups])
     (values k (reverse v))))
+
+(define-syntax if-let-values
+  (syntax-rules ()
+    [(if-let-values [(name names ...) prod]
+       then
+       otherwise)
+     (let-values ([(name names ...) prod])
+       (if name
+         then
+         otherwise))]))
+         
+(define-syntax when-let-values
+  (syntax-rules ()
+    [(when-let-values [(name names ...) prod]
+       stmts ...)
+     (let-values ([(name names ...) prod])
+       (when name
+         stmts ...))]))
+         
+(define-syntax while-let-values
+  (syntax-rules ()
+    [(while-let-values [(name names ...) prod]
+       stmts ...)
+     (let loop ()
+       (when-let-values [(name names ...) prod]
+         stmts ...
+         (loop)))]))
 
 (module* cont-env #f
   (provide (rename-out [zip-hash inject]
