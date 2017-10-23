@@ -114,11 +114,8 @@
       (emit-stmt! stmt-acc (gensym 'arg) dest src)))
 
   (Program : Program (ir) -> Program ()
-      [(prog ([,n* ,f*] ...) ,blocks)
-       `(prog ([,n* ,(map (cute Fn <> <>) f* n*)] ...) ,(CFG blocks #t))])
-  
-  (Fn : Fn (ir name) -> Fn ()
-    [(fn ,blocks) `(fn ,(CFG blocks name))])
+      [(prog ([,n* ,blocks*] ...) ,n)
+       `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
 
   (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))

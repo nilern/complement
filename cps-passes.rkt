@@ -425,8 +425,7 @@
   (Expr : Expr (ir env fn-acc stmt-acc) -> Expr ()
     [(fn ,blocks)
      (define f (gensym 'f))
-     (define cfg (CFG blocks fn-acc))
-     (hash-set! fn-acc f (with-output-language (CPCPS Fn) `(fn ,cfg)))
+     (hash-set! fn-acc f (CFG blocks fn-acc))
      (nanopass-case (CPS CFG) blocks
        [(cfg ([,n* ,k*] ...) ,n)
         (define freevars (hash-ref (hash-ref stats n) 'freevars))
@@ -469,7 +468,8 @@
                '()
                (fv-lexen env (hash-ref (hash-ref stats n) 'freevars))))])
 
-  (let*-values ([(fn-acc) (make-hash)]
-                [(cfg) (CFG ir fn-acc)]
-                [(fn-names fns) (unzip-hash fn-acc)])
-     `(prog ([,fn-names ,fns] ...) ,cfg)))
+  (let ([fn-acc (make-hash)]
+        [entry (gensym 'main)])
+    (hash-set! fn-acc entry (CFG ir fn-acc))
+    (define-values (fn-names fns) (unzip-hash fn-acc))
+    `(prog ([,fn-names ,fns] ...) ,entry)))

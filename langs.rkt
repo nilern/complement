@@ -129,17 +129,13 @@
   (Var (x)
     (lex n)
     (label n)))
-    
-;; TODO: (prog ([n* f*]) n), also merging CFG and Fn
+
 (define-language CPCPS
   (extends CPS)
   (entry Program)
 
-  (Program () ; TODO: (prog ([n* f*] ...) n) ; n = entry label
-    (+ (prog ([n1* f*] ...) blocks)))
-
-  (Fn (f)
-    (+ (fn blocks)))
+  (Program () 
+    (+ (prog ([n* blocks*] ...) n)))
 
   (CFG (blocks)
     (- (cfg ([n* k*] ...) n))

@@ -157,11 +157,8 @@
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
 (define-pass allocate-registers : RegisterizableCPCPS (ir global-liveness global-dom-forests) -> RegCPCPS ()
   (Program : Program (ir) -> Program ()
-    [(prog ([,n* ,f*] ...) ,blocks)
-     `(prog ([,n* ,(map (cute Fn <> <>) f* n*)] ...) ,(CFG blocks #t))])
-
-  (Fn : Fn (ir name) -> Fn ()
-    [(fn ,blocks) `(fn ,(CFG blocks name))])
+    [(prog ([,n* ,blocks*] ...) ,n)
+     `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
 
   (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
