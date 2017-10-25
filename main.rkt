@@ -30,7 +30,8 @@
           (cute allocate-registers <> liveness dom-forests)
           (cute schedule-moves <> liveness dom-forests)
           collect-constants ; TODO: move this after serialize-conts
-          serialize-conts))
+          serialize-conts
+          fallthrough))
 
   (define evals
     (list eval-Cst
@@ -42,6 +43,7 @@
           eval-CPS
           eval-CPS
           eval-CPCPS
+          #f
           #f
           #f
           #f

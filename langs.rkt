@@ -2,7 +2,7 @@
 
 (provide name? const? primop?
          Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
-         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS)
+         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS Asm)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -221,3 +221,12 @@
   (Atom (a)
     (- (const c))
     (+ (const i))))
+
+(define-language Asm
+  (extends ConstPoolCPCPS)
+
+  (Transfer (t)
+    (- (goto x))
+    (+ (br (maybe x)))
+    (- (if a? x1 x2))
+    (+ (brf a? x))))

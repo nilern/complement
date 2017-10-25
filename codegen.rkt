@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide schedule-moves collect-constants serialize-conts)
+(provide schedule-moves collect-constants serialize-conts fallthrough)
 (require racket/match racket/stream (only-in racket/function thunk) (only-in srfi/26 cute)
          (only-in racket/list remove-duplicates) racket/set racket/dict data/gvector
          (only-in threading ~>)
@@ -277,3 +277,20 @@
      (define kenv (zip-hash n1* k*))
      (define rpo (cfg:reverse-postorder (cpcpcps-cfg ir) (reverse n2*)))
      `(fn (,c* ...) ([,rpo ,(map (cute hash-ref kenv <>) rpo)] ...) (,n2* ...))]))
+
+(define-pass fallthrough : ConstPoolCPCPS (ir) -> Asm ()
+  (Fn : Fn (ir) -> Fn ()
+    [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
+     `(fn (,c* ...)
+          ([,n1* ,(for/list ([cont k*] [next-label (in-sequences (cdr n1*) (in-value #f))])
+                    (Cont cont next-label))] ...)
+          (,n2* ...))])
+
+  (Cont : Cont (ir next-label) -> Cont ()
+    [(cont ([,n* ,i*] ...) ,[s*] ... ,[t]) `(cont ([,n* ,i*] ...) ,s* ... ,t)])
+  
+  (Transfer : Transfer (ir next-label) -> Transfer ()
+    [(goto (label ,n)) (guard (eq? n next-label)) `(br #f)]
+    [(goto ,[x]) `(br ,x)]
+    [(if ,[a?] (label ,n) ,[x]) (guard (eq? n next-label)) `(brf ,a? ,x)]
+    [(if ,[a?] ,[x1] ,[x2]) (error "if cannot fall through" ir)]))
