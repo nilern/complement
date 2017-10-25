@@ -29,7 +29,8 @@
           cpcps:shrink
           (cute allocate-registers <> liveness dom-forests)
           (cute schedule-moves <> liveness dom-forests)
-          collect-constants))
+          collect-constants ; TODO: move this after serialize-conts
+          serialize-conts))
 
   (define evals
     (list eval-Cst
@@ -41,6 +42,7 @@
           eval-CPS
           eval-CPS
           eval-CPCPS
+          #f
           #f
           #f
           #f

@@ -1,15 +1,18 @@
 #lang racket/base
 
-(provide schedule-moves collect-constants)
+(provide schedule-moves collect-constants serialize-conts)
 (require racket/match racket/stream (only-in racket/function thunk) (only-in srfi/26 cute)
-         racket/set racket/dict data/gvector (only-in threading ~>)
+         (only-in racket/list remove-duplicates) racket/set racket/dict data/gvector
+         (only-in threading ~>)
          nanopass/base
          (rename-in "langs.rkt" (InstrCPCPS-Atom=? atom=?)
                                 (InstrCPCPS-Atom-hash hash-atom))
          (prefix-in reg-pool: (submod "register-allocation.rkt" reg-pool))
+         (prefix-in cfg: "cfg.rkt")
          (only-in "util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
-;;; TODO: constant pools
+;;; TODO: fallthrough
+;;; TODO: label and proc resolution
 ;;; TODO: pull out names into debug info tables
                     
 (define (dict-take! kvs k)
@@ -229,3 +232,48 @@
 
   (Atom : Atom (ir const-acc) -> Atom ()
     [(const ,c) `(const ,(push-const! const-acc c))]))
+
+(define-pass cpcpcps-cfg : ConstPoolCPCPS (ir) -> * ()
+  (definitions
+    (define (make-entry)
+      (make-hash `((callees . ()) (callers . ()))))
+  
+    (define (add-edge! cfg caller callee)
+      (~> (hash-ref! cfg caller make-entry)
+          (hash-update! 'callees (cute cons callee <>)))
+      (~> (hash-ref! cfg callee make-entry)
+          (hash-update! 'callers (cute cons caller <>)))))
+
+  (Fn : Fn (ir) -> * ()
+    [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
+     (define cfg (make-hash))
+     (for-each (cute Cont <> <> cfg) k* n1*)
+     (for/hash ([(label entry) cfg])
+       (values label
+               (for/hash ([(k vs) entry])
+                 (values k (remove-duplicates vs)))))])
+                 
+
+  (Cont : Cont (ir label cfg) -> * ()
+    [(cont ([,n* ,i*] ...) ,s* ... ,t)
+     (unless (hash-has-key? cfg label)
+       (hash-set! cfg label (make-entry)))
+     (Transfer t label cfg)])
+
+  (Transfer : Transfer (ir label cfg) -> * ()
+    [(goto ,x) (Callee x label cfg)]
+    [(if ,a? ,x1 ,x2) (Callee x1 label cfg) (Callee x2 label cfg)]
+    [(halt ,a) (void)])
+
+  (Callee : Var (ir label cfg) -> * ()
+    [(label ,n) (add-edge! cfg label n)]
+    [else (void)])
+
+  (Fn ir))
+
+(define-pass serialize-conts : ConstPoolCPCPS (ir) -> ConstPoolCPCPS ()
+  (Fn : Fn (ir) -> Fn ()
+    [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
+     (define kenv (zip-hash n1* k*))
+     (define rpo (cfg:reverse-postorder (cpcpcps-cfg ir) (reverse n2*)))
+     `(fn (,c* ...) ([,rpo ,(map (cute hash-ref kenv <>) rpo)] ...) (,n2* ...))]))

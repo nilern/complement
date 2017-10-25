@@ -1,20 +1,20 @@
 #lang racket/base
 
 (provide reverse-postorder dominator-forest)
-(require racket/set (only-in racket/list drop))
+(require racket/set (only-in racket/list drop) (only-in racket/sequence sequence-fold))
 
+;; FIXME: ATM need to have entries and callees in reverse to get exectly the desired order
+;;        for e.g. fallthrough.
 (define (reverse-postorder cont-calls entries)
   (define visited (mutable-set))
-  (define rpo '())
-  (define (visit! label)
-    (unless (set-member? visited label)
-      (set-add! visited label)
-      (for ([succ (hash-ref (hash-ref cont-calls label) 'callees)])
-        (visit! succ))
-      (set! rpo (cons label rpo))))
-  (for ([entry entries])
-    (visit! entry))
-  rpo)
+  (define (visit! rpo label)
+    (if (set-member? visited label)
+      rpo
+      (begin
+        (set-add! visited label)
+        (let ([succs (hash-ref (hash-ref cont-calls label) 'callees)])
+          (cons label (sequence-fold visit! rpo succs))))))
+  (sequence-fold visit! '() entries))
 
 ;; OPTIMIZE: use worklist algorithm or at least make sure that DAG:s only take the minimum 2 passes
 (define (dominator-forest rev-cont-calls rpo entries)

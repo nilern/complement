@@ -4,7 +4,8 @@
 (require racket/match racket/list racket/set data/gvector (only-in srfi/26 cute)
          nanopass/base
          "langs.rkt" (prefix-in cfg: "cfg.rkt") (prefix-in kenv: (submod "util.rkt" cont-env)))
-         
+
+;; TODO: DynEnv, Fn, Cont creations
 (define-pass select-instructions : CPCPS (ir) -> RegisterizableCPCPS ()
   (definitions
     (define (varargs-primop? op)
@@ -21,16 +22,12 @@
     (define (emit-compound-start name op len)
       (with-output-language (RegisterizableCPCPS Expr)
         (case op
-          [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))]
-          ;; TODO: denv
-          )))
+          [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))])))
 
     (define (emit-compound-step name op index atom)
       (with-output-language (RegisterizableCPCPS Expr)
         (case op
-          [(__tupleNew) `(primcall3 __tupleInit (lex ,name) (const ,index) ,atom)]
-          ;; TODO: denv
-          ))))
+          [(__tupleNew) `(primcall3 __tupleInit (lex ,name) (const ,index) ,atom)]))))
 
   (Cont : Cont (ir) -> Cont ()
     [(cont (,n* ...) ,s* ... ,[t])
