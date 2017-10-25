@@ -2,7 +2,7 @@
 
 (provide name? const? primop?
          Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
-         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS Asm)
+         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS Asm ResolvedAsm)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -227,6 +227,30 @@
 
   (Transfer (t)
     (- (goto x))
-    (+ (br (maybe x)))
+    (+ (br (maybe n)))
+    (+ (jmp x))
     (- (if a? x1 x2))
-    (+ (brf a? x))))
+    (+ (brf a? n))))
+
+(define-language ResolvedAsm
+  (extends Asm)
+
+  (Program ()
+    (- (prog ([n* f*] ...) n))
+    (+ (prog ([n* f*] ...) (n i))))
+
+  (Fn (f)
+    (- (fn (c* ...) ([n1* k*] ...) (n2* ...)))
+    (+ (fn (c* ...) ([n1* k*] ...) ([n2* i*] ...))))
+    
+  (Transfer (t)
+    (- (br (maybe n)))
+    (+ (br (maybe n) (maybe i)))
+    (- (brf a? n))
+    (+ (brf a? n i)))
+
+  (Var (x)
+    (- (label n))
+    (+ (label n i))
+    (- (proc n))
+    (+ (proc n i))))

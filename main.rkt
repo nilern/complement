@@ -31,7 +31,8 @@
           (cute schedule-moves <> liveness dom-forests)
           collect-constants ; TODO: move this after serialize-conts
           serialize-conts
-          fallthrough))
+          fallthrough
+          resolve))
 
   (define evals
     (list eval-Cst
@@ -43,6 +44,7 @@
           eval-CPS
           eval-CPS
           eval-CPCPS
+          #f
           #f
           #f
           #f

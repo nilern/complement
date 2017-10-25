@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide schedule-moves collect-constants serialize-conts fallthrough)
+(provide schedule-moves collect-constants serialize-conts fallthrough resolve)
 (require racket/match racket/stream (only-in racket/function thunk) (only-in srfi/26 cute)
          (only-in racket/list remove-duplicates) racket/set racket/dict data/gvector
          (only-in threading ~>)
@@ -11,8 +11,7 @@
          (prefix-in cfg: "cfg.rkt")
          (only-in "util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
-;;; TODO: fallthrough
-;;; TODO: label and proc resolution
+;;; TODO: Assemble code objects and bytecode files
 ;;; TODO: pull out names into debug info tables
                     
 (define (dict-take! kvs k)
@@ -271,6 +270,7 @@
 
   (Fn ir))
 
+;; TODO: Also serialize procs, at least putting emtry first.
 (define-pass serialize-conts : ConstPoolCPCPS (ir) -> ConstPoolCPCPS ()
   (Fn : Fn (ir) -> Fn ()
     [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
@@ -291,6 +291,75 @@
   
   (Transfer : Transfer (ir next-label) -> Transfer ()
     [(goto (label ,n)) (guard (eq? n next-label)) `(br #f)]
-    [(goto ,[x]) `(br ,x)]
-    [(if ,[a?] (label ,n) ,[x]) (guard (eq? n next-label)) `(brf ,a? ,x)]
-    [(if ,[a?] ,[x1] ,[x2]) (error "if cannot fall through" ir)]))
+    [(goto (label ,n)) `(br ,n)]
+    [(goto ,[x]) `(jmp ,x)]
+    [(if ,[a?] (label ,n1) (label ,n2)) (guard (eq? n1 next-label)) `(brf ,a? ,n2)]
+    [(if ,[a?] ,[x1] ,[x2]) (error "if has unimplementable destinations" ir)]))
+
+(define-pass resolve : Asm (ir) -> ResolvedAsm ()
+  (definitions
+    (define (transfer-length transfer)
+      (nanopass-case (Asm Transfer) transfer
+        [(br ,n) (guard (not n)) 0]
+        [else 1]))
+        
+    (define (cont-length cont)
+      (nanopass-case (Asm Cont) cont
+        [(cont ([,n* ,i*] ...) ,s* ... ,t) (+ (length s*) (transfer-length t))]))
+        
+    (define (make-label-env labels conts)
+      (define pc 0)
+      (for/hash ([label labels] [cont conts])
+        (values label
+                (begin0
+                  pc
+                  (set! pc (+ pc (cont-length cont)))))))
+
+    (define (resolve-label label-env pc label)
+      (- (hash-ref label-env label) (unbox pc))))
+
+  (Program : Program (ir) -> Program ()
+    [(prog ([,n* ,f*] ...) ,n)
+     (define proc-env
+       (for/hash ([(name i) (in-indexed n*)])
+         (values name i)))
+     (define fns
+       (for/list ([f f*])
+         (Fn f proc-env)))
+     `(prog ([,n* ,fns] ...) (,n ,(hash-ref proc-env n)))])
+
+  (Fn : Fn (ir proc-env) -> Fn ()
+    [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
+     (define label-env (make-label-env n1* k*))
+     (define pc (box 0))
+     (define conts
+       (for/list ([cont k*])
+         (Cont cont proc-env label-env pc)))
+     `(fn (,c* ...)
+          ([,n1* ,conts] ...)
+          ([,n2* ,(map (cute hash-ref label-env <>) n2*)] ...))])
+
+  (Cont : Cont (ir proc-env label-env pc) -> Cont ()
+    [(cont ([,n* ,i*] ...) ,s* ... ,t)
+     (define stmts
+       (for/list ([stmt s*])
+         (set-box! pc (+ (unbox pc) 1))
+         (Stmt stmt proc-env label-env pc)))
+     (set-box! pc (+ (unbox pc) (transfer-length t)))
+     (define transfer (Transfer t proc-env label-env pc))
+     `(cont ([,n* ,i*] ...) ,stmts ... ,transfer)])
+
+  (Stmt : Stmt (ir proc-env label-env pc) -> Stmt ())
+
+  (Expr : Expr (ir proc-env label-env pc) -> Expr ())
+
+  (Transfer : Transfer (ir proc-env label-env pc) -> Transfer ()
+    [(br ,n) (guard (not n)) `(br #f #f)]
+    [(br ,n) `(br ,n ,(resolve-label label-env pc n))]
+    [(brf ,[a?] ,n) `(brf ,a? ,n ,(resolve-label label-env pc n))])
+
+  (Atom : Atom (ir proc-env label-env pc) -> Atom ())
+
+  (Var : Var (ir proc-env label-env pc) -> Var ()
+    [(label ,n) `(label ,n ,(resolve-label label-env pc n))]
+    [(proc ,n) `(proc ,n ,(hash-ref proc-env n))]))
