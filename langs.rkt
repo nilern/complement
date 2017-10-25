@@ -2,7 +2,7 @@
 
 (provide name? const? primop?
          Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
-         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash)
+         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -204,3 +204,20 @@
 (define (InstrCPCPS-Atom-hash atom)
   (define-values (tag repr) (InstrCPCPS-Atom-deconstruct atom))
   (+ tag (equal-hash-code repr)))
+
+(define-language ConstPoolCPCPS
+  (extends InstrCPCPS)
+
+  (Program ()
+    (- (prog ([n* blocks*] ...) n))
+    (+ (prog ([n* f*] ...) n)))
+
+  (CFG (blocks)
+    (- (cfg ([n1* k*] ...) (n2* ...))))
+
+  (Fn (f)
+    (+ (fn (c* ...) ([n1* k*] ...) (n2* ...))))
+
+  (Atom (a)
+    (- (const c))
+    (+ (const i))))

@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide schedule-moves)
+(provide schedule-moves collect-constants)
 (require racket/match racket/stream (only-in racket/function thunk) (only-in srfi/26 cute)
          racket/set racket/dict data/gvector (only-in threading ~>)
          nanopass/base
@@ -187,3 +187,45 @@
     [(reg ,i) `(reg ,i)]
     [(label ,n) `(label ,n)]
     [(proc ,n) `(proc ,n)]))
+
+(define-pass collect-constants : InstrCPCPS (ir) -> ConstPoolCPCPS ()
+  (definitions
+    (define (make-const-acc)
+      (cons (make-gvector) (make-hash)))
+  
+    (define (push-const! const-acc const)
+      (match-define (cons index rev-index) const-acc)
+      (if (hash-has-key? rev-index const)
+        (hash-ref rev-index const)
+        (let ([i (gvector-count index)])
+          (gvector-add! index const)
+          (hash-set! rev-index const i)
+          i)))
+
+    (define (build-consts const-acc)
+      (gvector->list (car const-acc))))
+
+  (CFG : CFG (ir) -> Fn ()
+    [(cfg ([,n1* ,k*] ...) (,n2* ...))
+     (define const-acc (make-const-acc))
+     (define conts (map (cute Cont <> const-acc) k*))
+     `(fn (,(build-consts const-acc) ...) ([,n1* ,conts] ...) (,n2* ...))])
+
+  (Cont : Cont (ir const-acc) -> Cont ()
+    [(cont ([,n* ,i*] ...) ,[s*] ... ,[t]) `(cont ([,n* ,i*] ...) ,s* ... ,t)])
+
+  (Stmt : Stmt (ir const-acc) -> Stmt ()
+    [(def (,n ,i) ,[e]) `(def (,n ,i) ,e)])
+
+  (Expr : Expr (ir const-acc) -> Expr ()
+    [(primcall0 ,p)                   `(primcall0 ,p)]
+    [(primcall1 ,p ,[a])              `(primcall1 ,p ,a)]
+    [(primcall2 ,p ,[a1] ,[a2])       `(primcall2 ,p ,a1 ,a2)]
+    [(primcall3 ,p ,[a1] ,[a2] ,[a3]) `(primcall3 ,p ,a1 ,a2 ,a3)])
+
+  (Transfer : Transfer (ir const-acc) -> Transfer ()
+    [(if ,[a?] ,[x1] ,[x2]) `(if ,a? ,x1 ,x2)]
+    [(halt ,[a]) `(halt ,a)])
+
+  (Atom : Atom (ir const-acc) -> Atom ()
+    [(const ,c) `(const ,(push-const! const-acc c))]))
