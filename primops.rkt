@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide primapply base-ops denv-ops)
+(provide primapply base-ops denv-ops closure-op-names branch-op-names encodings decodings)
 (require racket/match racket/undefined)
 
 (define ((primapply ops) op args)
@@ -13,6 +13,7 @@
     '__iSub -
     '__iMul *
     '__tupleNew vector
+    '__tupleInit vector-set!
     '__tupleLength vector-length
     '__tupleGet vector-ref
     '__boxNew (λ () (box undefined))
@@ -28,3 +29,17 @@
                       [(list-rest k v kvs) (loop (hash-set denv k v) kvs)]
                       ['() denv])))
     '__denvGet (λ (denv k) (hash-ref denv k))))
+
+(define closure-op-names '(__fnNew __fnCode __fnGet __contNew __contCode))
+
+(define branch-op-names '(__br __brf __jmp __ijmp __tcall __raise __halt))
+
+(define encodings
+  (for/hash ([(op i) (in-indexed (in-sequences (in-value '__mov)
+                                               (in-hash-keys base-ops)
+                                               (in-hash-keys denv-ops)
+                                               closure-op-names
+                                               branch-op-names))])
+    (values op i)))
+
+(define decodings (for/hash ([(k v) encodings]) (values v k)))

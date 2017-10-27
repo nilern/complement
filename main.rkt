@@ -32,7 +32,8 @@
           collect-constants ; TODO: move this after serialize-conts
           serialize-conts
           fallthrough
-          resolve))
+          resolve
+          assemble-chunk))
 
   (define evals
     (list eval-Cst
@@ -44,6 +45,7 @@
           eval-CPS
           eval-CPS
           eval-CPCPS
+          #f
           #f
           #f
           #f
