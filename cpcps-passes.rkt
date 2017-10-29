@@ -48,7 +48,10 @@
     [(primcall ,p) (gvector-add! stmt-acc (emit-stmt name `(primcall0 ,p)))]
     [(primcall ,p ,[a]) (gvector-add! stmt-acc (emit-stmt name `(primcall1 ,p ,a)))]
     [(primcall ,p ,[a1] ,[a2]) (gvector-add! stmt-acc (emit-stmt name `(primcall2 ,p ,a1 ,a2)))]
-    [(primcall ,p ,a* ...) (error "primop argc")]))
+    [(primcall ,p ,a* ...) (error "primop argc")]
+    [,a (gvector-add! stmt-acc (emit-stmt name (Atom a)))])
+
+  (Atom : Atom (ir) -> Atom ()))
 
 ;; Bidirectional direct-call graph of a CFG
 (module label-table racket/base
