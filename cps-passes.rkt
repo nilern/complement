@@ -234,19 +234,19 @@
   (definitions
     (define (make-entry) (make-hash (list (cons 'freevars (mutable-set)))))
 
-    (define (freevars! table label)
-      (~> (hash-ref! table label make-entry)
+    (define (freevars table label)
+      (~> (hash-ref table label)
           (hash-ref 'freevars)))
     
     (define (use-clover! table label name)
-      (~> (freevars! table label)
+      (~> (freevars table label)
           (set-add! name)))
   
     (define (transitively! table label env src-label)
-      (define freevars (freevars! table label))
-      (for ([fv (freevars! table src-label)]
+      (define fvs (freevars table label))
+      (for ([fv (freevars table src-label)]
             #:when (not (set-member? env fv)))
-        (set-add! freevars fv))))
+        (set-add! fvs fv))))
 
   (CFG : CFG (ir stats visited) -> * ()
     [(cfg ([,n* ,k*] ...) ,n)
@@ -257,6 +257,7 @@
     [(cont (,n* ...) ,s* ... ,t)
      (unless (set-member? visited label)
        (set-add! visited label)
+       (hash-set! stats label (make-entry))
        (~> (list->set n*)
            (foldl (cute Stmt <> label <> kenv stats visited) _ s*)
            (Transfer t label _ kenv stats visited)))])
