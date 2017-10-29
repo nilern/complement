@@ -30,7 +30,8 @@
                       ['() denv])))
     '__denvGet (λ (denv k) (hash-ref denv k))))
 
-(define closure-op-names '(__fnNew __fnCode __fnGet __contNew __contCode))
+(define closure-op-names '(__closureInit __closureGet __fnNew __fnInitCode __fnCode
+                           __contNew __contInitCode __contCode))
 
 (define branch-op-names '(__br __brf __jmp __ijmp __tcall __raise __halt))
 

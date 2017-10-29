@@ -10,7 +10,7 @@
   (definitions
     (define (varargs-primop? op)
       (case op
-        [(__tupleNew __denvPush) #t]
+        [(__tupleNew __fnNew __contNew __denvPush) #t]
         [else #f]))
   
     (define (emit-stmt name expr)
@@ -22,12 +22,21 @@
     (define (emit-compound-start name op len)
       (with-output-language (RegisterizableCPCPS Expr)
         (case op
-          [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))])))
+          [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))]
+          [(__fnNew __contNew) (emit-stmt name `(primcall1 ,op (const ,(- len 1))))])))
 
     (define (emit-compound-step name op index atom)
       (with-output-language (RegisterizableCPCPS Expr)
         (case op
-          [(__tupleNew) `(primcall3 __tupleInit (lex ,name) (const ,index) ,atom)]))))
+          [(__tupleNew) `(primcall3 __tupleInit (lex ,name) (const ,index) ,atom)]
+          [(__fnNew)
+           (if (= index 0)
+             `(primcall2 __fnInitCode (lex ,name) ,atom)
+             `(primcall3 __closureInit (lex ,name) (const ,(- index 1)) ,atom))]
+          [(__contNew)
+           (if (= index 0)
+             `(primcall2 __contInitCode (lex ,name) ,atom)
+             `(primcall3 __closureInit (lex ,name) (const ,(- index 1)) ,atom))]))))
 
   (Cont : Cont (ir) -> Cont ()
     [(cont (,n* ...) ,s* ... ,[t])

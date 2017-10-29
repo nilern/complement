@@ -6,7 +6,8 @@
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
            (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
-           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
+           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt"
+           (prefix-in vm: "vm.rkt"))
 
   (define cps-ltab (make-hash))
   (define cps-vtab (make-hash))
@@ -53,7 +54,7 @@
           #f
           #f
           #f
-          #f))
+          vm:run))
 
   (define (main)
     (define input (current-input-port))
@@ -63,7 +64,8 @@
       (pretty-print ir*)
       (when eval
         (display "\n---\n\n")
-        (pretty-print (eval ir*)))
+        (let ([value (time (eval ir*))])
+          (pretty-print value)))
       (display "\n===\n\n")
       ir*)
     (void))

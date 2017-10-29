@@ -325,7 +325,7 @@
     (define (fv-loads closure env freevars)
       (with-output-language (CPCPS Stmt)
         (for/list ([(fv i) (in-indexed freevars)])
-          `(def ,(hash-ref env fv fv) (primcall __fnGet (lex ,closure) (const ,i))))))
+          `(def ,(hash-ref env fv fv) (primcall __closureGet (lex ,closure) (const ,i))))))
 
     (struct $cont-acc (conts entry-point return-points))
 

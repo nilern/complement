@@ -1,14 +1,13 @@
 #lang racket/base
 
-(provide schedule-moves collect-constants serialize-conts fallthrough resolve
-         chunk code-object assemble-chunk)
+(provide schedule-moves collect-constants serialize-conts fallthrough resolve assemble-chunk)
 (require racket/match racket/stream (only-in racket/function thunk) (only-in srfi/26 cute)
          (only-in racket/list remove-duplicates) racket/set racket/dict data/gvector
          (only-in threading ~>)
          nanopass/base
          (rename-in "langs.rkt" (InstrCPCPS-Atom=? atom=?)
                                 (InstrCPCPS-Atom-hash hash-atom))
-         (prefix-in ops: "primops.rkt")
+         (prefix-in ops: "primops.rkt") (prefix-in bytecode: "bytecode.rkt")
          (prefix-in reg-pool: (submod "register-allocation.rkt" reg-pool))
          (prefix-in cfg: "cfg.rkt")
          (only-in "util.rkt" zip-hash unzip-hash when-let-values while-let-values))
@@ -366,79 +365,18 @@
     [(label ,n) `(label ,n ,(resolve-label label-env pc n))]
     [(proc ,n) `(proc ,n ,(hash-ref proc-env n))]))
 
-(struct chunk (procs entry) #:transparent)
-(struct code-object (name consts instr) #:transparent)
-
-;; FIXME: assert that indices fit into instr fields
 (define-pass assemble-chunk : ResolvedAsm (ir) -> * ()
-  (definitions
-    (define bit-or bitwise-ior)
-    (define ash arithmetic-shift)
-
-    (define arg-atom-shift 8)
-    (define arg-offset-shift 16)
-    (define arg-index-shift 8)
-    (define arg-atom-index-shift 2)
-    
-    (define encode-op (cute hash-ref ops:encodings <>))
-
-    (define (encode-arg-atom arg-atom)
-      (nanopass-case (ResolvedAsm Atom) arg-atom
-        [(reg ,i)      (bit-or (ash i arg-atom-index-shift) 0)]
-        [(const ,i)    (bit-or (ash i arg-atom-index-shift) 1)]
-        [(label ,n ,i) (bit-or (ash i arg-atom-index-shift) 2)]
-        [(proc ,n ,i)  (bit-or (ash i arg-atom-index-shift) 3)]))
-    
-    (define (encode-arg-atoms arg-atoms)
-      (foldr (lambda (arg-atom acc)
-               (~> (ash acc arg-atom-shift)
-                   (bit-or (encode-arg-atom arg-atom))))
-             0 arg-atoms))
-    
-    (define (emit-ainstr! instr-acc op arg-atoms)
-      (~> (encode-arg-atoms arg-atoms)
-          (ash arg-atom-shift)
-          (bit-or (encode-op op))
-          (gvector-add! instr-acc _)))
-  
-    (define (emit-stmt! instr-acc op dest-reg . args)
-      (if dest-reg
-        (emit-ainstr! instr-acc op (cons dest-reg args))
-        (emit-ainstr! instr-acc op args)))
-      
-    (define (emit-branch! instr-acc op . args)
-      (gvector-add! instr-acc
-                    (match* (op args)
-                      [('__br (list i))
-                       (~> (ash i arg-offset-shift)
-                           (bit-or (encode-op op)))]
-                      [('__brf (list a? i))
-                       (~> (ash i arg-offset-shift)
-                           (bit-or (ash (encode-arg-atom a?) arg-atom-shift))
-                           (bit-or (encode-op op)))]
-                      [('__jmp (list x))
-                       (nanopass-case (ResolvedAsm Var) x
-                         [(label ,n ,i) (~> (ash i arg-index-shift)
-                                            (bit-or (encode-op '__jmp)))]
-                         [(reg ,i) (~> (ash i arg-index-shift)
-                                       (bit-or (encode-op '__ijmp)))]
-                         [(proc ,n ,i) (~> (ash i arg-index-shift)
-                                           (bit-or (encode-op '__tcall)))])]
-                      [('__halt (list a))
-                       (~> (ash (encode-arg-atom a) arg-atom-shift)
-                           (bit-or (encode-op op)))]))))
-
   (Program : Program (ir) -> * ()
     [(prog ([,n* ,f*] ...) (,n ,i))
-     (chunk (for/vector ([name n*] [f f*]) (Fn f name)) i)])
+     (bytecode:$chunk (for/vector ([name n*] [f f*]) (Fn f name)) i)])
 
   (Fn : Fn (ir name) -> * ()
     [(fn (,c* ...) ([,n1* ,k*] ...) ([,n2* ,i*] ...))
      (define instr-acc (make-gvector))
      (for-each (cute Cont <> instr-acc) k*)
-     (code-object name
-                  (list->vector c*)
-                  (gvector->vector instr-acc))])
+     (bytecode:$code-object name
+                           (list->vector c*)
+                           (gvector->vector instr-acc))])
 
   (Cont : Cont (ir instr-acc) -> * ()
     [(cont ([,n* ,i*] ...) ,s* ... ,t)
@@ -446,21 +384,19 @@
      (Transfer t instr-acc)])
 
   (Stmt : Stmt (ir instr-acc) -> * ()
-    [(def (,n ,i) ,e)
-     (with-output-language (ResolvedAsm Var)
-       (Expr e `(reg ,i) instr-acc))]
+    [(def (,n ,i) ,e) (Expr e i instr-acc)]
     [,e (Expr e #f instr-acc)])
 
   (Expr : Expr (ir dest-reg instr-acc) -> * ()
-    [(primcall0 ,p)             (emit-stmt! instr-acc p dest-reg)]
-    [(primcall1 ,p ,a)          (emit-stmt! instr-acc p dest-reg a)]
-    [(primcall2 ,p ,a1 ,a2)     (emit-stmt! instr-acc p dest-reg a1 a2)]
-    [(primcall3 ,p ,a1 ,a2 ,a3) (emit-stmt! instr-acc p dest-reg a1 a2 a3)]
-    [,a                         (emit-stmt! instr-acc '__mov dest-reg a)])
+    [(primcall0 ,p)             (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg))]
+    [(primcall1 ,p ,a)          (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a))]
+    [(primcall2 ,p ,a1 ,a2)     (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a1 a2))]
+    [(primcall3 ,p ,a1 ,a2 ,a3) (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a1 a2 a3))]
+    [,a                         (gvector-add! instr-acc (bytecode:encode-stmt '__mov dest-reg a))])
 
   (Transfer : Transfer (ir instr-acc) -> * ()
     [(br ,n ,i) (guard (not n)) (void)]
-    [(br ,n ,i)      (emit-branch! instr-acc '__br i)]
-    [(jmp ,x)        (emit-branch! instr-acc '__jmp x)]
-    [(brf ,a? ,n ,i) (emit-branch! instr-acc '__brf a? i)]
-    [(halt ,a)       (emit-branch! instr-acc '__halt a)]))
+    [(br ,n ,i)      (gvector-add! instr-acc (bytecode:encode-transfer '__br i))]
+    [(jmp ,x)        (gvector-add! instr-acc (bytecode:encode-transfer '__jmp x))]
+    [(brf ,a? ,n ,i) (gvector-add! instr-acc (bytecode:encode-transfer '__brf a? i))]
+    [(halt ,a)       (gvector-add! instr-acc (bytecode:encode-transfer '__halt a))]))

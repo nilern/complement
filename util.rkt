@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by
-         if-let-values when-let-values while-let-values)
+         while if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
 (struct exn:unbound exn:fail ())
@@ -30,6 +30,14 @@
       (hash-update groups (f v) (cute cons v <>) '())))
   (for/hash ([(k v) groups])
     (values k (reverse v))))
+
+(define-syntax while
+  (syntax-rules ()
+    [(while cond stmts ...)
+     (let loop ()
+       (when cond
+         stmts ...
+         (loop)))]))
 
 (define-syntax if-let-values
   (syntax-rules ()

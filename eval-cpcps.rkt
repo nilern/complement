@@ -42,7 +42,7 @@
           (match* (op args)
             [('__fnNew (cons fn freevars)) (value:$fn fn (list->vector freevars))]
             [('__fnCode (list (value:$fn code _))) (kenv:ref fenv code)]
-            [('__fnGet (list (or (value:$fn _ freevars) (value:$cont _ freevars)) i))
+            [('__closureGet (list (or (value:$fn _ freevars) (value:$cont _ freevars)) i))
              (vector-ref freevars i)]
             [('__contNew (cons cont freevars)) (value:$cont cont (list->vector freevars))]
             [('__contCode (list (value:$cont code _))) code]
