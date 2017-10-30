@@ -1,7 +1,8 @@
 #lang racket/base
 
 (module+ main
-  (require (only-in racket/function identity) (only-in srfi/26 cute) racket/pretty
+  (require racket/match racket/cmdline (only-in racket/function identity) (only-in srfi/26 cute)
+           racket/pretty
            nanopass/base
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
@@ -10,6 +11,7 @@
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt"
            (prefix-in vm: "vm.rkt"))
 
+  (define output (current-output-port))
   (define cps-ltab (make-hash))
   (define cps-vtab (make-hash))
   (define liveness (make-hash))
@@ -36,10 +38,7 @@
           fallthrough
           resolve
           assemble-chunk
-          (lambda (chunk)
-            (define blob (open-output-bytes))
-            (serialize-chunk chunk blob)
-            (get-output-bytes blob))))
+          (lambda (chunk) (serialize-chunk chunk output))))
 
   (define evals
     (list eval-Cst
@@ -63,16 +62,30 @@
           #f))
 
   (define (main)
-    (define input (current-input-port))
+    (define verbose #f)
+    (define input
+      (command-line
+        #:once-each
+        [("-o") output-filename "Name of output file"
+         (set! output (open-output-file output-filename #:mode 'binary #:exists 'truncate))]
+        [("-v") "Verbose mode"
+         (set! verbose #t)]
+        #:args input-filenames
+        (match input-filenames
+          ['() (current-input-port)]
+          [(list input-filename) (open-input-file input-filename)]
+          [_ (error "too many input files")])))
+
   	(for/fold ([ir input])
               ([pass passes] [eval evals])
       (define ir* (pass ir))
-      (pretty-print ir*)
-      (when eval
-        (display "\n---\n\n")
-        (let ([value (time (eval ir*))])
-          (pretty-print value)))
-      (display "\n===\n\n")
+      (when verbose
+        (pretty-print ir*)
+        (when eval
+          (display "\n---\n\n")
+          (let ([value (time (eval ir*))])
+            (pretty-print value)))
+        (display "\n===\n\n"))
       ir*)
     (void))
 
