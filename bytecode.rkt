@@ -12,7 +12,7 @@
 
 ;; FIXME: assert that indices fit into instr fields
          
-(struct $chunk (procs entry) #:transparent)
+(struct $chunk (reg-demand procs entry) #:transparent)
 (struct $code-object (name consts instrs) #:transparent)
 
 (define bit-and bitwise-and)

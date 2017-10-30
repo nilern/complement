@@ -118,9 +118,11 @@
 
   (Program : Program (ir) -> Program ()
       [(prog ([,n* ,blocks*] ...) ,n)
-       `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
+       (define max-regs (box 0))
+       (define f* (map (cute CFG <> <> max-regs) blocks* n*))
+       `(prog ([,n* ,f*] ...) ,(unbox max-regs) ,n)])
 
-  (CFG : CFG (ir name) -> CFG ()
+  (CFG : CFG (ir name max-regs) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define liveness (hash-ref livenesses name))
      (define dom-forest (hash-ref dom-forests name))
@@ -130,13 +132,13 @@
      (for ([entry n2*])
        (let loop ([dom-tree (hash-ref dom-forest entry)])
          (match-define (cons label children) dom-tree)
-         (Cont (hash-ref kenv label) label kenv env (hash-ref liveness label) cont-acc)
+         (Cont (hash-ref kenv label) label kenv env (hash-ref liveness label) cont-acc max-regs)
          (for ([child children])
            (loop child))))
      (define-values (labels conts) (unzip-hash cont-acc))
      `(cfg ([,labels ,conts] ...) (,n2* ...))])
 
-  (Cont : Cont (ir label kenv env liveness cont-acc) -> Cont ()
+  (Cont : Cont (ir label kenv env liveness cont-acc max-regs) -> Cont ()
     [(cont ([,n* ,i*] ...) ,s* ... ,t)
      (define reg-pool (reg-pool:make))
      (define stmt-acc (make-gvector))
@@ -148,6 +150,7 @@
      (for ([stmt s*] [luses (hash-ref liveness 'stmt-last-uses)])
        (Stmt stmt env reg-pool luses stmt-acc))
      (define transfer (Transfer t kenv reg-pool stmt-acc))
+     (set-box! max-regs (max (unbox max-regs) (reg-pool:count reg-pool)))
      (hash-set! cont-acc label `(cont ([,n* ,i*] ...) ,(gvector->list stmt-acc) ... ,transfer))])
 
   (Stmt : Stmt (ir env reg-pool luses stmt-acc) -> Stmt ()
@@ -320,14 +323,14 @@
       (- (hash-ref label-env label) (unbox pc))))
 
   (Program : Program (ir) -> Program ()
-    [(prog ([,n* ,f*] ...) ,n)
+    [(prog ([,n* ,f*] ...) ,i ,n)
      (define proc-env
        (for/hash ([(name i) (in-indexed n*)])
          (values name i)))
      (define fns
        (for/list ([f f*])
          (Fn f proc-env)))
-     `(prog ([,n* ,fns] ...) (,n ,(hash-ref proc-env n)))])
+     `(prog ([,n* ,fns] ...) ,i (,n ,(hash-ref proc-env n)))])
 
   (Fn : Fn (ir proc-env) -> Fn ()
     [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
@@ -367,8 +370,8 @@
 
 (define-pass assemble-chunk : ResolvedAsm (ir) -> * ()
   (Program : Program (ir) -> * ()
-    [(prog ([,n* ,f*] ...) (,n ,i))
-     (bytecode:$chunk (for/vector ([name n*] [f f*]) (Fn f name)) i)])
+    [(prog ([,n* ,f*] ...) ,i1 (,n ,i2))
+     (bytecode:$chunk i1 (for/vector ([name n*] [f f*]) (Fn f name)) i2)])
 
   (Fn : Fn (ir name) -> * ()
     [(fn (,c* ...) ([,n1* ,k*] ...) ([,n2* ,i*] ...))

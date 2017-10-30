@@ -113,12 +113,14 @@
   (CFG ir))
 
 (module reg-pool racket/base
-  (provide make preallocate! allocate! deallocate! deallocate-luses!)
+  (provide make count preallocate! allocate! deallocate! deallocate-luses!)
   (require racket/match racket/list (only-in srfi/26 cute))
 
   (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
 
   (define (make) ($reg-pool '() 0))
+
+  (define count $reg-pool-capacity)
 
   (define (push! reg-pool reg)
     (set-$reg-pool-stack! reg-pool (cons reg ($reg-pool-stack reg-pool))))

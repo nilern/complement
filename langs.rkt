@@ -184,6 +184,10 @@
 
 (define-language InstrCPCPS
   (extends RegCPCPS)
+    
+  (Program ()
+    (- (prog ([n* blocks*] ...) n))
+    (+ (prog ([n* blocks*] ...) i n)))
 
   (Transfer (t)
     (- (goto x a* ...))
@@ -209,8 +213,8 @@
   (extends InstrCPCPS)
 
   (Program ()
-    (- (prog ([n* blocks*] ...) n))
-    (+ (prog ([n* f*] ...) n)))
+    (- (prog ([n* blocks*] ...) i n))
+    (+ (prog ([n* f*] ...) i n)))
 
   (CFG (blocks)
     (- (cfg ([n1* k*] ...) (n2* ...))))
@@ -236,8 +240,8 @@
   (extends Asm)
 
   (Program ()
-    (- (prog ([n* f*] ...) n))
-    (+ (prog ([n* f*] ...) (n i))))
+    (- (prog ([n* f*] ...) i n))
+    (+ (prog ([n* f*] ...) i1 (n i2))))
 
   (Fn (f)
     (- (fn (c* ...) ([n1* k*] ...) (n2* ...)))

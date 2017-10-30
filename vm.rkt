@@ -8,19 +8,14 @@
                   decode-op decode-byte-arg decode-short-arg decode-atom-arg)
          (only-in "util.rkt" while))
 
-;; TODO: Determine required register count statically for entire chunk
-
 (struct $code-ptr (proc pc) #:transparent)
 (struct $closure ([code #:mutable] env) #:transparent)
 
 (define dyn-env hash)
 
 (define const-ref vector-ref)
-(define reg-ref gvector-ref)
-(define (reg-set! registers index value)
-  (while (<= (gvector-count registers) index)
-    (gvector-add! registers undefined))
-  (gvector-set! registers index value))
+(define reg-ref vector-ref)
+(define reg-set! vector-set!)
 (define (atom-ref regs consts instr field-index)
   (match/values (decode-atom-arg instr field-index)
     [(0 ri) (reg-ref regs ri)]
@@ -28,8 +23,8 @@
 
 (define (run program)
   (let/ec return
-    (define registers (make-gvector))
-    (match-define ($chunk procs entry) program)
+    (match-define ($chunk regc procs entry) program)
+    (define registers (make-vector regc undefined))
     (define curr-proc undefined)
     (define consts undefined)
     (define instrs undefined)
