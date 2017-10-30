@@ -1,6 +1,7 @@
 #lang racket/base
 
-(provide $chunk $code-object encode-stmt encode-transfer
+(provide (struct-out $chunk) (struct-out $code-object)
+         encode-stmt encode-transfer
          decode-op decode-byte-arg decode-short-arg decode-atom-arg)
 (require racket/match
          data/gvector
@@ -12,7 +13,7 @@
 ;; FIXME: assert that indices fit into instr fields
          
 (struct $chunk (procs entry) #:transparent)
-(struct $code-object (name consts instr) #:transparent)
+(struct $code-object (name consts instrs) #:transparent)
 
 (define bit-and bitwise-and)
 (define bit-or bitwise-ior)
@@ -129,8 +130,7 @@
 (define (decode-short-arg instr)
   (ash instr (- short-arg-shift)))
 
-(define (decode-atom-arg instr index regs consts)
+(define (decode-atom-arg instr index)
   (define bits (decode-byte-arg instr index))
-  (case (bit-and bits arg-atom-tag-mask)
-    [(0) (gvector-ref regs (ash bits (- arg-atom-index-shift)))]
-    [(1) (vector-ref consts (ash bits (- arg-atom-index-shift)))]))
+  (values (bit-and bits arg-atom-tag-mask)
+          (ash bits (- arg-atom-index-shift))))

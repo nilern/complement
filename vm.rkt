@@ -1,9 +1,10 @@
 #lang racket/base
 
 (provide run)
-(require racket/match racket/undefined (only-in srfi/26 cute)
+(require racket/match racket/undefined
          data/gvector
-         (only-in "bytecode.rkt" $chunk $code-object
+         (only-in "bytecode.rkt" $chunk $chunk-procs $chunk-entry
+                  $code-object $code-object-consts $code-object-instrs
                   decode-op decode-byte-arg decode-short-arg decode-atom-arg)
          (only-in "util.rkt" while))
 
@@ -14,6 +15,17 @@
 
 (define dyn-env hash)
 
+(define const-ref vector-ref)
+(define reg-ref gvector-ref)
+(define (reg-set! registers index value)
+  (while (<= (gvector-count registers) index)
+    (gvector-add! registers undefined))
+  (gvector-set! registers index value))
+(define (atom-ref regs consts instr field-index)
+  (match/values (decode-atom-arg instr field-index)
+    [(0 ri) (reg-ref regs ri)]
+    [(1 ci) (const-ref consts ci)]))
+
 (define (run program)
   (let/ec return
     (define registers (make-gvector))
@@ -22,41 +34,34 @@
     (define consts undefined)
     (define instrs undefined)
     (define pc undefined)
-
-    (define const-ref (cute vector-ref consts <>))
-    (define reg-ref (cute gvector-ref registers <>))
-    (define (reg-set! index value)
-      (while (<= (gvector-count registers) index)
-        (gvector-add! registers undefined))
-      (gvector-set! registers index value))
-
+    
     (define-syntax decode
       (syntax-rules (quote byte short reg atom)
         [(decode instr 'byte)
          (decode-byte-arg instr 0)]
         [(decode instr 'byte 'atom)
          (values (decode-byte-arg instr 0)
-                 (decode-atom-arg instr 1 registers consts))]
+                 (atom-ref registers consts instr 1))]
         [(decode instr 'byte 'atom 'atom)
          (values (decode-byte-arg instr 0)
-                 (decode-atom-arg instr 1 registers consts)
-                 (decode-atom-arg instr 2 registers consts))]
+                 (atom-ref registers consts instr 1)
+                 (atom-ref registers consts instr 2))]
         [(decode instr 'reg)
-         (reg-ref (decode-byte-arg instr 0))]
+         (reg-ref registers (decode-byte-arg instr 0))]
         [(decode instr 'reg 'atom)
-         (values (reg-ref (decode-byte-arg instr 0))
-                 (decode-atom-arg instr 1 registers consts))]
+         (values (reg-ref registers (decode-byte-arg instr 0))
+                 (atom-ref registers consts instr 1))]
         [(decode instr 'reg 'short)
-         (values (reg-ref (decode-byte-arg instr 0))
+         (values (reg-ref registers (decode-byte-arg instr 0))
                  (decode-short-arg instr))]
         [(decode instr 'reg 'atom 'atom)
-         (values (reg-ref (decode-byte-arg instr 0))
-                 (decode-atom-arg instr 1 registers consts)
-                 (decode-atom-arg instr 2 registers consts))]
+         (values (reg-ref registers (decode-byte-arg instr 0))
+                 (atom-ref registers consts instr 1)
+                 (atom-ref registers consts instr 2))]
         [(decode instr 'atom)
-         (decode-atom-arg instr 0 registers consts)]
+         (atom-ref registers consts instr 0)]
         [(decode instr 'atom 'short)
-         (values (decode-atom-arg instr 0 registers consts)
+         (values (atom-ref registers consts instr 0)
                  (decode-short-arg instr))]))
     
     (define (call! next-proc next-pc)
@@ -75,56 +80,56 @@
         ;; Nullary expr-stmts:
         [(__boxNew)
          (define dest (decode instr 'byte))
-         (reg-set! dest (box undefined))]
+         (reg-set! registers dest (box undefined))]
         [(__denvNew)
          (define dest (decode instr 'byte))
-         (reg-set! dest (dyn-env))]
+         (reg-set! registers dest (dyn-env))]
 
         ;; Unary expr-stmts:
         [(__mov)
          (define-values (dest value) (decode instr 'byte 'atom))
-         (reg-set! dest value)]
+         (reg-set! registers dest value)]
         [(__tupleNew)
          (define-values (dest wsize) (decode instr 'byte 'atom))
-         (reg-set! dest (make-vector wsize undefined))]
+         (reg-set! registers dest (make-vector wsize undefined))]
         [(__fnNew)
          (define-values (dest wsize) (decode instr 'byte 'atom))
-         (reg-set! dest ($closure undefined (make-vector wsize undefined)))]
+         (reg-set! registers dest ($closure undefined (make-vector wsize undefined)))]
         [(__contNew)
          (define-values (dest wsize) (decode instr 'byte 'atom))
-         (reg-set! dest ($closure undefined (make-vector wsize undefined)))]
+         (reg-set! registers dest ($closure undefined (make-vector wsize undefined)))]
         [(__boxGet)
          (define-values (dest b) (decode instr 'byte 'atom))
-         (reg-set! dest (unbox b))]
+         (reg-set! registers dest (unbox b))]
         [(__tupleLength)
          (define-values (dest tuple) (decode instr 'byte 'atom))
-         (reg-set! dest (vector-length tuple))]
+         (reg-set! registers dest (vector-length tuple))]
         [(__fnCode)
          (define-values (dest f) (decode instr 'byte 'atom))
-         (reg-set! dest ($closure-code f))]
+         (reg-set! registers dest ($closure-code f))]
         [(__contCode)
          (define-values (dest cont) (decode instr 'byte 'atom))
-         (reg-set! dest ($closure-code cont))]
+         (reg-set! registers dest ($closure-code cont))]
 
         ;; Binary expr-stmts:
         [(__iEq)
          (define-values (dest a b) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (= a b))]
+         (reg-set! registers dest (= a b))]
         [(__iAdd)
          (define-values (dest a b) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (+ a b))]
+         (reg-set! registers dest (+ a b))]
         [(__iSub)
          (define-values (dest a b) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (- a b))]
+         (reg-set! registers dest (- a b))]
         [(__iMul)
          (define-values (dest a b) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (* a b))]
+         (reg-set! registers dest (* a b))]
         [(__tupleGet)
          (define-values (dest tuple index) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (vector-ref tuple index))]
+         (reg-set! registers dest (vector-ref tuple index))]
         [(__closureGet)
          (define-values (dest f index) (decode instr 'byte 'atom 'atom))
-         (reg-set! dest (vector-ref ($closure-env f) index))]
+         (reg-set! registers dest (vector-ref ($closure-env f) index))]
 
         ;; Binary eff-stmts:
         [(__boxSet)
