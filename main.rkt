@@ -6,6 +6,7 @@
            "langs.rkt"
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
            (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
+           (only-in "bytecode.rkt" serialize-chunk)
            "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt"
            (prefix-in vm: "vm.rkt"))
 
@@ -34,7 +35,11 @@
           serialize-conts
           fallthrough
           resolve
-          assemble-chunk))
+          assemble-chunk
+          (lambda (chunk)
+            (define blob (open-output-bytes))
+            (serialize-chunk chunk blob)
+            (get-output-bytes blob))))
 
   (define evals
     (list eval-Cst
@@ -54,7 +59,8 @@
           #f
           #f
           #f
-          vm:run))
+          vm:run
+          #f))
 
   (define (main)
     (define input (current-input-port))

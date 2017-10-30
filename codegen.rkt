@@ -12,7 +12,6 @@
          (prefix-in cfg: "cfg.rkt")
          (only-in "util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
-;;; TODO: Assemble code objects and bytecode files
 ;;; TODO: pull out names into debug info tables
                     
 (define (dict-take! kvs k)

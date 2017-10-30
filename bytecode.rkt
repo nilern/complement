@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide (struct-out $chunk) (struct-out $code-object)
+(provide (struct-out $chunk) serialize-chunk (struct-out $code-object)
          encode-stmt encode-transfer
          decode-op decode-byte-arg decode-short-arg decode-atom-arg)
 (require racket/match
@@ -134,3 +134,37 @@
   (define bits (decode-byte-arg instr index))
   (values (bit-and bits arg-atom-tag-mask)
           (ash bits (- arg-atom-index-shift))))
+
+(define (serialize-usize n out)
+  (write-bytes (integer->integer-bytes n 8 #f) out))
+
+(define (serialize-raw-string str out)
+  (serialize-usize (string-length str) out)
+  (write-string str out))
+
+(define (serialize-vector vec serialize-elem out)
+  (serialize-usize (vector-length vec) out)
+  (for ([elem vec])
+    (serialize-elem elem out)))
+
+(define (serialize-const const out)
+  (cond
+    [(fixnum? const)
+     (write-byte 0 out)
+     (serialize-usize const out)]
+    [(symbol? const)
+     (write-byte 1 out)
+     (serialize-raw-string (symbol->string const) out)]
+    [else (error "unable to serialize constant" const)]))
+
+(define (serialize-proc proc out)
+  (match-define ($code-object name consts instrs) proc)
+  (serialize-raw-string (symbol->string name) out)
+  (serialize-vector consts serialize-const out)
+  (serialize-vector instrs serialize-usize out))
+
+(define (serialize-chunk chunk out)
+  (match-define ($chunk regc procs entry) chunk)
+  (serialize-usize regc out)
+  (serialize-usize entry out)
+  (serialize-vector procs serialize-proc out))
