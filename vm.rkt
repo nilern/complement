@@ -109,7 +109,7 @@
 
         ;; Binary eff-stmts:
         [(__boxSet)
-         (define box (decode-atom-arg instr 0 registers consts))
+         (define box (reg-ref registers (decode-byte-arg instr 0)))
          (define value (decode-atom-arg instr 1 registers consts))
          (set-box! box value)]
         ;; ...with regs and offsets instead of atoms:
@@ -126,12 +126,12 @@
 
         ;; Ternary eff-stmts:
         [(__tupleInit)
-         (define tuple (decode-atom-arg instr 0 registers consts))   
+         (define tuple (reg-ref registers (decode-byte-arg instr 0)))
          (define index (decode-atom-arg instr 1 registers consts))
          (define value (decode-atom-arg instr 2 registers consts))
          (vector-set! tuple index value)]
         [(__closureInit)
-         (define f (decode-atom-arg instr 0 registers consts))   
+         (define f (reg-ref registers (decode-byte-arg instr 0))) 
          (define index (decode-atom-arg instr 1 registers consts))
          (define value (decode-atom-arg instr 2 registers consts))
          (vector-set! ($closure-env f) index value)]

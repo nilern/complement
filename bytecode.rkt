@@ -44,28 +44,24 @@
                (bit-or (encode-arg-atom arg-atom))))
          0 arg-atoms))
          
-(define (encode-expr-stmt op dest-reg encoded-args)
+(define (encode-astmt op dest-reg encoded-args)
   (~> (ash encoded-args arg-atom-shift)
       (bit-or dest-reg)
       (ash op-width)
-      (bit-or (encode-op op))))
-               
-(define (encode-eff-stmt op encoded-args)
-  (~> (ash encoded-args op-width)
       (bit-or (encode-op op))))
 
 (define (encode-stmt op dest-reg . args)
   (if dest-reg
     (match* (op args)
       [((or '__boxNew '__denvNew) '())
-       (encode-expr-stmt op dest-reg (encode-arg-atoms args))]
+       (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__mov
             '__boxGet '__tupleNew '__tupleLength '__fnNew '__fnCode '__contNew '__contCode
             '__raise)
         (list _))
-       (encode-expr-stmt op dest-reg (encode-arg-atoms args))]
+       (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__iEq '__iAdd '__iSub '__iMul '__tupleGet '__closureGet) (list _ _))
-       (encode-expr-stmt op dest-reg (encode-arg-atoms args))]
+       (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])
     (match* (op args)
       [((or '__fnInitCode) (list dest proc))
@@ -92,10 +88,14 @@
        (~> (ash label-offset 16)
            (bit-or (ash dest-reg op-width))
            (bit-or (encode-op op)))]
-      [((or '__boxSet) (list _ _))
-       (encode-eff-stmt op (encode-arg-atoms args))]
-      [((or '__tupleInit '__closureInit) (list _ _ _))
-       (encode-eff-stmt op (encode-arg-atoms args))]
+      [((or '__boxSet
+            '__tupleInit '__closureInit)
+        (cons dest args))
+       (define dest-reg
+         (nanopass-case (ResolvedAsm Atom) dest
+           [(reg ,i) i]
+           [else (error "not a reg" dest)]))
+       (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])))
   
 (define (encode-transfer op . args)
