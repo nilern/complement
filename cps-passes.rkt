@@ -322,10 +322,12 @@
         (for/list ([fv freevars])
           `(lex ,(hash-ref env fv fv)))))
 
-    (define (fv-loads closure env freevars)
+    (define (fv-loads fn-entry? closure env freevars)
       (with-output-language (CPCPS Stmt)
         (for/list ([(fv i) (in-indexed freevars)])
-          `(def ,(hash-ref env fv fv) (primcall __closureGet (lex ,closure) (const ,i))))))
+          (if fn-entry?
+            `(def ,(hash-ref env fv fv) (primcall __fnGet (lex ,closure) (const ,i)))
+            `(def ,(hash-ref env fv fv) (primcall __contGet (lex ,closure) (const ,i)))))))
 
     (struct $cont-acc (conts entry-point return-points))
 
@@ -357,12 +359,12 @@
      (for ([entry entries])
        (let loop ([dom-tree (hash-ref dom-forest entry)] [env (hash)])
          (match-define (cons label children) dom-tree)
-         (define env* (Cont (kenv:ref kenv label) label env fn-acc cont-acc))
+         (define env* (Cont (kenv:ref kenv label) label (eq? label n) env fn-acc cont-acc))
          (for ([child children])
            (loop child env*))))
      (build-cfg cont-acc)])
 
-  (Cont : Cont (ir label env fn-acc cont-acc) -> Cont ()
+  (Cont : Cont (ir label fn-entry? env fn-acc cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
      (define freevars (hash-ref (hash-ref stats label) 'freevars))
      (define ltab-entry (hash-ref ltab label))
@@ -399,7 +401,7 @@
            (Stmt stmt env fn-acc stmt-acc))
          (let ([transfer (Transfer t env stmt-acc)])
            (emit-cont! cont-acc 'closed label `(cont (,closure ,n* ...)
-                                                     ,(fv-loads closure env freevars) ...
+                                                     ,(fv-loads fn-entry? closure env freevars) ...
                                                      ,(gvector->list stmt-acc) ...
                                                      ,transfer)))
          env)])

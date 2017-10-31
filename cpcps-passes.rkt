@@ -32,11 +32,11 @@
           [(__fnNew)
            (if (= index 0)
              `(primcall2 __fnInitCode (lex ,name) ,atom)
-             `(primcall3 __closureInit (lex ,name) (const ,(- index 1)) ,atom))]
+             `(primcall3 __fnInit (lex ,name) (const ,(- index 1)) ,atom))]
           [(__contNew)
            (if (= index 0)
              `(primcall2 __contInitCode (lex ,name) ,atom)
-             `(primcall3 __closureInit (lex ,name) (const ,(- index 1)) ,atom))]))))
+             `(primcall3 __contInit (lex ,name) (const ,(- index 1)) ,atom))]))))
 
   (Cont : Cont (ir) -> Cont ()
     [(cont (,n* ...) ,s* ... ,[t])

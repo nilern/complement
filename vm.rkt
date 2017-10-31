@@ -9,7 +9,8 @@
          (only-in "util.rkt" while))
 
 (struct $code-ptr (proc pc) #:transparent)
-(struct $closure ([code #:mutable] env) #:transparent)
+(struct $fn ([proc #:mutable] env) #:transparent)
+(struct $cont ([code #:mutable] env) #:transparent)
 
 (define dyn-env hash)
 
@@ -89,10 +90,10 @@
          (reg-set! registers dest (make-vector wsize undefined))]
         [(__fnNew)
          (define-values (dest wsize) (decode instr 'byte 'atom))
-         (reg-set! registers dest ($closure undefined (make-vector wsize undefined)))]
+         (reg-set! registers dest ($fn undefined (make-vector wsize undefined)))]
         [(__contNew)
          (define-values (dest wsize) (decode instr 'byte 'atom))
-         (reg-set! registers dest ($closure undefined (make-vector wsize undefined)))]
+         (reg-set! registers dest ($cont undefined (make-vector wsize undefined)))]
         [(__boxGet)
          (define-values (dest b) (decode instr 'byte 'atom))
          (reg-set! registers dest (unbox b))]
@@ -101,10 +102,10 @@
          (reg-set! registers dest (vector-length tuple))]
         [(__fnCode)
          (define-values (dest f) (decode instr 'byte 'atom))
-         (reg-set! registers dest ($closure-code f))]
+         (reg-set! registers dest ($code-ptr ($fn-proc f) 0))]
         [(__contCode)
          (define-values (dest cont) (decode instr 'byte 'atom))
-         (reg-set! registers dest ($closure-code cont))]
+         (reg-set! registers dest ($cont-code cont))]
 
         ;; Binary expr-stmts:
         [(__iEq)
@@ -122,9 +123,12 @@
         [(__tupleGet)
          (define-values (dest tuple index) (decode instr 'byte 'atom 'atom))
          (reg-set! registers dest (vector-ref tuple index))]
-        [(__closureGet)
+        [(__fnGet)
          (define-values (dest f index) (decode instr 'byte 'atom 'atom))
-         (reg-set! registers dest (vector-ref ($closure-env f) index))]
+         (reg-set! registers dest (vector-ref ($fn-env f) index))]
+        [(__contGet)
+         (define-values (dest f index) (decode instr 'byte 'atom 'atom))
+         (reg-set! registers dest (vector-ref ($cont-env f) index))]
 
         ;; Binary eff-stmts:
         [(__boxSet)
@@ -134,19 +138,22 @@
         [(__fnInitCode)
          (define-values (f proc-index) (decode instr 'reg 'short))
          (define cob (vector-ref procs proc-index))
-         (set-$closure-code! f ($code-ptr cob 0))]
+         (set-$fn-proc! f cob)]
         [(__contInitCode)
          (define-values (cont offset) (decode instr 'reg 'short))
          (define cont-pc (+ pc offset))
-         (set-$closure-code! cont ($code-ptr curr-proc cont-pc))]
+         (set-$cont-code! cont ($code-ptr curr-proc cont-pc))]
 
         ;; Ternary eff-stmts:
         [(__tupleInit)
          (define-values (tuple index value) (decode instr 'reg 'atom 'atom))
          (vector-set! tuple index value)]
-        [(__closureInit)
+        [(__fnInit)
          (define-values (f index value) (decode instr 'reg 'atom 'atom))
-         (vector-set! ($closure-env f) index value)]
+         (vector-set! ($fn-env f) index value)]
+        [(__contInit)
+         (define-values (f index value) (decode instr 'reg 'atom 'atom))
+         (vector-set! ($cont-env f) index value)]
 
         ;; Branches (offset within curr-proc):
         [(__brf) ; branch if false

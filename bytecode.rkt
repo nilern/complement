@@ -34,7 +34,8 @@
     __iEq __iAdd __iSub __iMul
     __boxNew __boxSet __boxGet
     __tupleNew __tupleInit __tupleLength __tupleGet
-    __closureInit __closureGet __fnNew __fnInitCode __fnCode __contNew __contInitCode __contCode
+    __fnNew __fnInitCode __fnInit __fnCode __fnGet
+    __contNew __contInitCode __contInit __contCode __contGet
     __denvNew __denvPush __denvGet
     __br __brf
     __jmp __ijmp
@@ -79,7 +80,7 @@
             '__raise)
         (list _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
-      [((or '__iEq '__iAdd '__iSub '__iMul '__tupleGet '__closureGet) (list _ _))
+      [((or '__iEq '__iAdd '__iSub '__iMul '__tupleGet '__fnGet '__contGet) (list _ _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])
     (match* (op args)
@@ -108,7 +109,7 @@
            (bit-or (ash dest-reg op-width))
            (bit-or (encode-op op)))]
       [((or '__boxSet
-            '__tupleInit '__closureInit)
+            '__tupleInit '__fnInit '__contInit)
         (cons dest args))
        (define dest-reg
          (nanopass-case (ResolvedAsm Atom) dest
@@ -179,7 +180,7 @@
   (match-define ($code-object name consts instrs) proc)
   (serialize-raw-string (symbol->string name) out)
   (serialize-vector consts serialize-const out)
-  (serialize-vector instrs serialize-usize out))
+  (serialize-vector instrs serialize-usize out)) ; FIXME: serialize-u32
 
 (define (serialize-chunk chunk out)
   (match-define ($chunk regc procs entry) chunk)
