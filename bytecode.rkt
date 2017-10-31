@@ -1,14 +1,13 @@
 #lang racket/base
 
 (provide (struct-out $chunk) serialize-chunk (struct-out $code-object)
-         encode-stmt encode-transfer
+         op-encodings op-decodings encode-stmt encode-transfer
          decode-op decode-byte-arg decode-short-arg decode-atom-arg)
 (require racket/match
          data/gvector
          (only-in srfi/26 cute) (only-in threading ~>)
          nanopass/base
-         (only-in "langs.rkt" ResolvedAsm)
-         (prefix-in ops: "primops.rkt"))
+         (only-in "langs.rkt" ResolvedAsm))
 
 ;; FIXME: assert that indices fit into instr fields
          
@@ -30,7 +29,26 @@
 (define arg-atom-mask (- (ash 1 arg-atom-width) 1))
 (define arg-atom-tag-mask #b1)
 
-(define encode-op (cute hash-ref ops:encodings <>))
+(define ops
+  '(__mov
+    __iEq __iAdd __iSub __iMul
+    __boxNew __boxSet __boxGet
+    __tupleNew __tupleInit __tupleLength __tupleGet
+    __closureInit __closureGet __fnNew __fnInitCode __fnCode __contNew __contInitCode __contCode
+    __denvNew __denvPush __denvGet
+    __br __brf
+    __jmp __ijmp
+    __halt __raise))
+
+(define op-encodings
+  (for/hash ([(op i) (in-indexed ops)])
+    (values op i)))
+
+(define op-decodings
+  (for/hash ([(k v) op-encodings])
+    (values v k)))
+
+(define encode-op (cute hash-ref op-encodings <>))
 
 (define (encode-arg-atom arg-atom)
   (nanopass-case (ResolvedAsm Atom) arg-atom
@@ -121,7 +139,7 @@
          (bit-or (encode-op op)))]))
 
 (define (decode-op instr)
-  (hash-ref ops:decodings (bit-and instr op-mask)))
+  (hash-ref op-decodings (bit-and instr op-mask)))
 
 (define (decode-byte-arg instr index)
   (~> (ash instr (- (* (+ index 1) arg-atom-shift)))
