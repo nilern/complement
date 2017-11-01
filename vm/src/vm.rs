@@ -59,10 +59,10 @@ impl VM {
 
     fn instrs(&self) -> &[Instr] { self.curr_proc.instrs.as_slice() }
 
-    fn atom(&self, ai: Atom) -> ValueRef {
+    fn atom(&self, ai: Atom) -> &ValueRef {
         match ai {
-            Atom::Reg(ri) => self.regs[ri].clone(),
-            Atom::Const(ci) => self.consts()[ci].clone()   
+            Atom::Reg(ri) => &self.regs[ri],
+            Atom::Const(ci) => &self.consts()[ci]  
         }
     }
 
@@ -73,32 +73,32 @@ impl VM {
             match instr.op() {
                 MOV => {
                     let di = instr.byte_arg(0);
-                    let v = self.atom(instr.atom_arg(1));
+                    let v = self.atom(instr.atom_arg(1)).clone();
                     self.regs[di] = v;
                 },
             
                 IEQ => {
                     let di = instr.byte_arg(0);
-                    let a = isize::try_from(&*self.atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let a = isize::try_from(&**self.atom(instr.atom_arg(1)))?;
+                    let b = isize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     self.regs[di] = Gc::new(Value::Bool(a == b));
                 },
                 IADD => {
                     let di = instr.byte_arg(0);
-                    let a = isize::try_from(&*self.atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let a = isize::try_from(&**self.atom(instr.atom_arg(1)))?;
+                    let b = isize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     self.regs[di] = Gc::new(Value::Int(a + b));
                 },
                 ISUB => {
                     let di = instr.byte_arg(0);
-                    let a = isize::try_from(&*self.atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let a = isize::try_from(&**self.atom(instr.atom_arg(1)))?;
+                    let b = isize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     self.regs[di] = Gc::new(Value::Int(a - b));
                 },
                 IMUL => {
                     let di = instr.byte_arg(0);
-                    let a = isize::try_from(&*self.atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let a = isize::try_from(&**self.atom(instr.atom_arg(1)))?;
+                    let b = isize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     self.regs[di] = Gc::new(Value::Int(a * b));
                 },
 
@@ -110,15 +110,15 @@ impl VM {
                     let b = &self.regs[instr.byte_arg(0)];
                     let v = self.atom(instr.atom_arg(1));
                     if let &Value::Box(ref cell) = &**b {
-                        *cell.borrow_mut() = v;
+                        *cell.borrow_mut() = v.clone();
                     } else {
                         return Err(VMError::Type);     
                     }
                 },
                 BOX_GET => {
                     let di = instr.byte_arg(0);
-                    let b = &self.atom(instr.atom_arg(1));
-                    if let &Value::Box(ref cell) = &**b {
+                    let b = self.atom(instr.atom_arg(1)).clone();
+                    if let &Value::Box(ref cell) = &*b {
                         self.regs[di] = cell.borrow().clone();
                     } else {
                         return Err(VMError::Type);     
@@ -127,15 +127,15 @@ impl VM {
                 
                 TUPLE_NEW => {
                     let di = instr.byte_arg(0);
-                    let len = isize::try_from(&*self.atom(instr.atom_arg(1)))? as usize;
+                    let len = isize::try_from(&**self.atom(instr.atom_arg(1)))? as usize;
                     self.regs[di] = Gc::new(Value::new_tuple(len));
                 },
                 TUPLE_INIT => {
                     let f = &self.regs[instr.byte_arg(0)];
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(1)))?;
-                    let v = self.atom(instr.atom_arg(2)).clone();
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(1)))?;
+                    let v = self.atom(instr.atom_arg(2));
                     if let &Value::Tuple(ref fields_cell) = &**f {
-                        fields_cell.borrow_mut()[i] = v;
+                        fields_cell.borrow_mut()[i] = v.clone();
                     } else {
                         return Err(VMError::Type);     
                     }
@@ -152,7 +152,7 @@ impl VM {
                 TUPLE_GET => {
                     let di = instr.byte_arg(0);
                     let t = self.atom(instr.atom_arg(1)).clone();
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     if let &Value::Tuple(ref fields_cell) = &*t {
                         self.regs[di] = fields_cell.borrow()[i].clone();
                     } else {
@@ -162,31 +162,31 @@ impl VM {
 
                 FN_NEW => {
                     let di = instr.byte_arg(0);
-                    let len = isize::try_from(&*self.atom(instr.atom_arg(1)))? as usize;
+                    let len = usize::try_from(&**self.atom(instr.atom_arg(1)))?;
                     self.regs[di] = Gc::new(Value::new_fn(len));
                 },
                 FN_INIT_CODE => {
                     let f = &self.regs[instr.byte_arg(0)];
-                    let cob = self.procs[instr.short_arg()].clone();
+                    let cob = &self.procs[instr.short_arg()];
                     if let &Value::Fn(ref proc_cell, _) = &**f {
-                        *proc_cell.borrow_mut() = Some(cob);
+                        *proc_cell.borrow_mut() = Some(cob.clone());
                     } else {
                         return Err(VMError::Type);     
                     }
                 },
                 FN_INIT => {
                     let f = &self.regs[instr.byte_arg(0)];
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(1)))?;
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(1)))?;
                     let v = self.atom(instr.atom_arg(2));
                     if let &Value::Fn(_, ref env_cell) = &**f {
-                        env_cell.borrow_mut()[i] = v;
+                        env_cell.borrow_mut()[i] = v.clone();
                     } else {
                         return Err(VMError::Type);     
                     }
                 },
                 FN_CODE => {
                     let di = instr.byte_arg(0);
-                    let f = self.atom(instr.atom_arg(1));
+                    let f = self.atom(instr.atom_arg(1)).clone();
                     if let &Value::Fn(ref proc_cell, _) = &*f {
                         if let &Some(ref cob) = &*proc_cell.borrow() {
                             self.regs[di] = Gc::new(Value::CodePtr(cob.clone(), 0));
@@ -200,7 +200,7 @@ impl VM {
                 FN_GET => {
                     let di = instr.byte_arg(0);
                     let f = self.regs[instr.byte_arg(1)].clone();
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     if let &Value::Fn(_, ref env_cell) = &*f {
                         self.regs[di] = env_cell.borrow()[i].clone();
                     } else {
@@ -210,7 +210,7 @@ impl VM {
                 
                 CONT_NEW => {
                     let di = instr.byte_arg(0);
-                    let len = isize::try_from(&*self.atom(instr.atom_arg(1)))? as usize;
+                    let len = usize::try_from(&**self.atom(instr.atom_arg(1)))?;
                     self.regs[di] = Gc::new(Value::new_cont(len));
                 },
                 CONT_INIT_CODE => {
@@ -226,17 +226,17 @@ impl VM {
                 },
                 CONT_INIT => {
                     let k = &self.regs[instr.byte_arg(0)];
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(1)))?;
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(1)))?;
                     let v = self.atom(instr.atom_arg(2));
                     if let &Value::Cont(_, ref env_cell) = &**k {
-                        env_cell.borrow_mut()[i] = v;
+                        env_cell.borrow_mut()[i] = v.clone();
                     } else {
                         return Err(VMError::Type);     
                     }
                 },
                 CONT_CODE => {
                     let di = instr.byte_arg(0);
-                    let k = self.atom(instr.atom_arg(1));
+                    let k = self.atom(instr.atom_arg(1)).clone();
                     if let &Value::Cont(ref code_cell, _) = &*k {
                         if let &Value::CodePtr(ref cob, ref pc) = &**code_cell.borrow() {
                             self.regs[di] = Gc::new(Value::CodePtr(cob.clone(), *pc));
@@ -250,7 +250,7 @@ impl VM {
                 CONT_GET => {
                     let di = instr.byte_arg(0);
                     let k = self.regs[instr.byte_arg(1)].clone();
-                    let i = usize::try_from(&*self.atom(instr.atom_arg(2)))?;
+                    let i = usize::try_from(&**self.atom(instr.atom_arg(2)))?;
                     if let &Value::Cont(_, ref env_cell) = &*k {
                         self.regs[di] = env_cell.borrow()[i].clone();
                     } else {
@@ -264,7 +264,7 @@ impl VM {
                 },
 
                 BRF => {
-                    let cond = self.atom(instr.atom_arg(0));
+                    let cond = self.atom(instr.atom_arg(0)).clone();
                     match &*cond {
                         &Value::Bool(true) => {},
                         &Value::Bool(false) => {
@@ -285,7 +285,7 @@ impl VM {
                     }  
                 },
 
-                HALT => return Ok(self.atom(instr.atom_arg(0))),
+                HALT => return Ok(self.atom(instr.atom_arg(0)).clone()),
                 
                 op => panic!("unimplemented op {:?}", op)
             }
