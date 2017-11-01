@@ -129,12 +129,13 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_fn(len));
                 },
                 FN_INIT_CODE => {
-                    let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let cob = &self.procs[instr.short_arg()];
-                    *f.code.borrow_mut() = Some(cob.clone());
+                    let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    let cob = self.procs[instr.short_arg()].clone();
+                    let code = Gc::new(Value::new_code_ptr(cob, 0));
+                    *f.code.borrow_mut() = code;
                 },
                 FN_INIT => {
-                    let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                     let v = self.load_atom(instr.atom_arg(2));
                     *f.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
@@ -142,23 +143,19 @@ impl VM {
                 FN_CODE => {
                     let di = instr.byte_arg(0);
                     let code = {
-                        let f: &VMFn = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                        if let &Some(ref cob) = &*f.code.borrow() {
-                            Gc::new(Value::new_code_ptr(cob.clone(), 0))
-                        } else {
-                            return Err(VMError::Uninitialized);
-                        }
+                        let f: &Closure = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        f.code.borrow().clone()
                     };
                     self.regs[di] = code;
                 },
                 FN_GET => {
                     let di = instr.byte_arg(0);
                     let v = {
-                        let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
+                        let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
                         let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
                         f.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                     };
-                    self.regs[di] = v;
+                    self.regs[di] = v; 
                 },
                 
                 CONT_NEW => {
@@ -167,14 +164,14 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_cont(len));
                 },
                 CONT_INIT_CODE => {
-                    let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let offset = instr.short_arg() as isize;
                     let cont_pc = (self.pc as isize + offset) as usize;
                     let code = Gc::new(Value::new_code_ptr(self.curr_proc.clone(), cont_pc));
                     *k.code.borrow_mut() = code;
                 },
                 CONT_INIT => {
-                    let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                     let v = self.load_atom(instr.atom_arg(2));
                     *k.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
@@ -182,7 +179,7 @@ impl VM {
                 CONT_CODE => {
                     let di = instr.byte_arg(0);
                     let code = {
-                        let k: &Cont = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let k: &Closure = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                         k.code.borrow().clone()
                     };
                     self.regs[di] = code;
@@ -190,7 +187,7 @@ impl VM {
                 CONT_GET => {
                     let di = instr.byte_arg(0);
                     let v = {
-                        let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
+                        let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
                         let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
                         k.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                     };

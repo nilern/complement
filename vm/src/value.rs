@@ -28,13 +28,7 @@ pub struct CodePtr {
 }
 
 #[derive(Debug, Trace, Finalize)]
-pub struct VMFn {
-    pub code: GcCell<Option<Gc<Proc>>>,
-    pub env: GcCell<Vec<ValueRef>>
-}
-
-#[derive(Debug, Trace, Finalize)]
-pub struct Cont {
+pub struct Closure {
     pub code: GcCell<Gc<Value>>,
     pub env: GcCell<Vec<ValueRef>>
 }
@@ -52,8 +46,8 @@ pub enum Value {
     Box(VMBox),
     
     CodePtr(CodePtr),
-    Fn(VMFn),
-    Cont(Cont),
+    Fn(Closure),
+    Cont(Closure),
     
     Denv(HashMap<String, ValueRef>)
 }
@@ -75,14 +69,14 @@ impl Value {
     }
 
     pub fn new_fn(len: usize) -> Value {
-        Value::Fn(VMFn {
-            code: GcCell::new(None),
+        Value::Cont(Closure {
+            code: GcCell::new(Gc::new(Value::Null)),
             env: GcCell::new(vec![Gc::new(Value::Null); len])
         })
     }
     
     pub fn new_cont(len: usize) -> Value {
-        Value::Cont(Cont {
+        Value::Cont(Closure {
             code: GcCell::new(Gc::new(Value::Null)),
             env: GcCell::new(vec![Gc::new(Value::Null); len])
         })
@@ -141,18 +135,10 @@ impl<'a> TryFrom<&'a Value> for &'a CodePtr {
     }
 }
 
-impl<'a> TryFrom<&'a Value> for &'a VMFn {
+impl<'a> TryFrom<&'a Value> for &'a Closure {
     type Error = VMError;
 
-    fn try_from(v: &Value) -> Result<&VMFn, VMError> {
-        if let &Value::Fn(ref f) = v { Ok(f) } else { Err(VMError::Type) }
-    }
-}
-
-impl<'a> TryFrom<&'a Value> for &'a Cont {
-    type Error = VMError;
-
-    fn try_from(v: &Value) -> Result<&Cont, VMError> {
+    fn try_from(v: &Value) -> Result<&Closure, VMError> {
         if let &Value::Cont(ref k) = v { Ok(k) } else { Err(VMError::Type) }
     }
 }
