@@ -1,39 +1,8 @@
 use std::convert::TryFrom;
 use gc::Gc;
 
-use value::{Program, Proc, Value, ValueRef};
+use value::*;
 use bytecode::*;
-
-#[derive(Debug)]
-pub enum VMError {
-    OutOfInstrs,
-    Uninitialized,
-    Type
-}
-
-impl<'a> TryFrom<&'a Value> for isize {
-    type Error = VMError;
-
-    fn try_from(v: &Value) -> Result<isize, VMError> {
-        if let &Value::Int(i) = v {
-            Ok(i)
-        } else {
-            Err(VMError::Type) 
-        }
-    }
-}
-
-impl<'a> TryFrom<&'a Value> for usize {
-    type Error = VMError;
-
-    fn try_from(v: &Value) -> Result<usize, VMError> {
-        if let &Value::Int(i) = v {
-            Ok(i as usize)
-        } else {
-            Err(VMError::Type) 
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct VM {
@@ -111,22 +80,17 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_box());
                 },
                 BOX_INIT => {
-                    let b = &self.regs[instr.byte_arg(0)];
+                    let b: &VMBox = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let v = self.load_atom(instr.atom_arg(1));
-                    if let &Value::Box(ref cell) = &**b {
-                        *cell.borrow_mut() = v.clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    *b.value.borrow_mut() = v.clone();
                 },
                 BOX_GET => {
                     let di = instr.byte_arg(0);
-                    let b = self.load_atom(instr.atom_arg(1)).clone();
-                    if let &Value::Box(ref cell) = &*b {
-                        self.regs[di] = cell.borrow().clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let v = {
+                        let b: &VMBox = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        b.value.borrow().clone()
+                    };
+                    self.regs[di] = v;
                 },
                 
                 TUPLE_NEW => {
@@ -135,33 +99,27 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_tuple(len));
                 },
                 TUPLE_INIT => {
-                    let f = &self.regs[instr.byte_arg(0)];
+                    let t: &Tuple = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                     let v = self.load_atom(instr.atom_arg(2));
-                    if let &Value::Tuple(ref fields_cell) = &**f {
-                        fields_cell.borrow_mut()[i] = v.clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    *t.fields.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 TUPLE_LEN => {
                     let di = instr.byte_arg(0);
-                    let t = self.load_atom(instr.atom_arg(1)).clone();
-                    if let &Value::Tuple(ref fields_cell) = &*t {
-                        self.regs[di] = Gc::new(Value::Int(fields_cell.borrow().len() as isize));
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let len = {
+                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        Gc::new(Value::Int(t.fields.borrow().len() as isize))
+                    };
+                    self.regs[di] = len;
                 },
                 TUPLE_GET => {
                     let di = instr.byte_arg(0);
-                    let t = self.load_atom(instr.atom_arg(1)).clone();
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    if let &Value::Tuple(ref fields_cell) = &*t {
-                        self.regs[di] = fields_cell.borrow()[i].clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let v = {
+                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        t.fields.borrow().get(i).ok_or(VMError::Bounds)?.clone()
+                    };
+                    self.regs[di] = v;
                 },
 
                 FN_NEW => {
@@ -170,46 +128,36 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_fn(len));
                 },
                 FN_INIT_CODE => {
-                    let f = &self.regs[instr.byte_arg(0)];
+                    let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let cob = &self.procs[instr.short_arg()];
-                    if let &Value::Fn(ref proc_cell, _) = &**f {
-                        *proc_cell.borrow_mut() = Some(cob.clone());
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    *f.code.borrow_mut() = Some(cob.clone());
                 },
                 FN_INIT => {
-                    let f = &self.regs[instr.byte_arg(0)];
+                    let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                     let v = self.load_atom(instr.atom_arg(2));
-                    if let &Value::Fn(_, ref env_cell) = &**f {
-                        env_cell.borrow_mut()[i] = v.clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    *f.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 FN_CODE => {
                     let di = instr.byte_arg(0);
-                    let f = self.load_atom(instr.atom_arg(1)).clone();
-                    if let &Value::Fn(ref proc_cell, _) = &*f {
-                        if let &Some(ref cob) = &*proc_cell.borrow() {
-                            self.regs[di] = Gc::new(Value::CodePtr(cob.clone(), 0));
+                    let code = {
+                        let f: &VMFn = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        if let &Some(ref cob) = &*f.code.borrow() {
+                            Gc::new(Value::new_code_ptr(cob.clone(), 0))
                         } else {
                             return Err(VMError::Uninitialized);
                         }
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    };
+                    self.regs[di] = code;
                 },
                 FN_GET => {
                     let di = instr.byte_arg(0);
-                    let f = self.regs[instr.byte_arg(1)].clone();
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    if let &Value::Fn(_, ref env_cell) = &*f {
-                        self.regs[di] = env_cell.borrow()[i].clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let v = {
+                        let f: &VMFn = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
+                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        f.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
+                    };
+                    self.regs[di] = v;
                 },
                 
                 CONT_NEW => {
@@ -218,48 +166,34 @@ impl VM {
                     self.regs[di] = Gc::new(Value::new_cont(len));
                 },
                 CONT_INIT_CODE => {
-                    let f = &self.regs[instr.byte_arg(0)];
+                    let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let offset = instr.short_arg() as isize;
-                    if let &Value::Cont(ref code_cell, _) = &**f {
-                        let cont_pc = (self.pc as isize + offset) as usize;
-                        let code = Gc::new(Value::CodePtr(self.curr_proc.clone(), cont_pc));
-                        *code_cell.borrow_mut() = code;
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let cont_pc = (self.pc as isize + offset) as usize;
+                    let code = Gc::new(Value::new_code_ptr(self.curr_proc.clone(), cont_pc));
+                    *k.code.borrow_mut() = code;
                 },
                 CONT_INIT => {
-                    let k = &self.regs[instr.byte_arg(0)];
+                    let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
                     let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
                     let v = self.load_atom(instr.atom_arg(2));
-                    if let &Value::Cont(_, ref env_cell) = &**k {
-                        env_cell.borrow_mut()[i] = v.clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    *k.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 CONT_CODE => {
                     let di = instr.byte_arg(0);
-                    let k = self.load_atom(instr.atom_arg(1)).clone();
-                    if let &Value::Cont(ref code_cell, _) = &*k {
-                        if let &Value::CodePtr(ref cob, ref pc) = &**code_cell.borrow() {
-                            self.regs[di] = Gc::new(Value::CodePtr(cob.clone(), *pc));
-                        } else {
-                            return Err(VMError::Uninitialized);
-                        }
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let code = {
+                        let k: &Cont = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        k.code.borrow().clone()
+                    };
+                    self.regs[di] = code;
                 },
                 CONT_GET => {
                     let di = instr.byte_arg(0);
-                    let k = self.regs[instr.byte_arg(1)].clone();
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    if let &Value::Cont(_, ref env_cell) = &*k {
-                        self.regs[di] = env_cell.borrow()[i].clone();
-                    } else {
-                        return Err(VMError::Type);     
-                    }
+                    let v = {
+                        let k: &Cont = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
+                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        k.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
+                    };
+                    self.regs[di] = v; 
                 },
                 
                 DENV_NEW => {
@@ -268,25 +202,17 @@ impl VM {
                 },
 
                 BRF => {
-                    let cond = self.load_atom(instr.atom_arg(0)).clone();
-                    match &*cond {
-                        &Value::Bool(true) => {},
-                        &Value::Bool(false) => {
-                            let offset = instr.short_arg() as isize;
-                            self.pc = (self.pc as isize + offset) as usize;  
-                        },
-                        _ => return Err(VMError::Type)
-                    }     
+                    let cond = bool::try_from(&**self.load_atom(instr.atom_arg(0)))?;
+                    if !cond {
+                        let offset = instr.short_arg() as isize;
+                        self.pc = (self.pc as isize + offset) as usize;
+                    }  
                 }
 
                 IJMP => {
-                    let code = &self.regs[instr.byte_arg(0)];
-                    if let &Value::CodePtr(ref cob, ref pc) = &**code {
-                        self.curr_proc = cob.clone();
-                        self.pc = *pc;
-                    } else {
-                        return Err(VMError::Type);     
-                    }  
+                    let code: &CodePtr = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    self.curr_proc = code.cob.clone();
+                    self.pc = code.pc; 
                 },
 
                 HALT => return Ok(self.load_atom(instr.atom_arg(0)).clone()),
