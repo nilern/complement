@@ -33,10 +33,11 @@ impl VM {
         }
     }
 
-    fn load_atom(&self, ai: Atom) -> &ValueRef {
-        match ai {
-            Atom::Reg(ri) => &self.regs[ri],
-            Atom::Const(ci) => &self.curr_proc.consts[ci]  
+    fn load_atom(&self, (tag, index): (u8, u8)) -> &ValueRef {
+        match tag {
+            0 => &self.regs[index as usize],
+            1 => &self.curr_proc.consts[index as usize],
+            _ => unreachable!()     
         }
     }
 

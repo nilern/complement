@@ -2,12 +2,6 @@ const BYTE_MASK: u32 = (1 << 8) - 1;
 const ATOM_INDEX_SHIFT: usize = 1;
 const ATOM_TAG_MASK: usize = (1 << ATOM_INDEX_SHIFT) - 1;
 
-#[derive(Debug, Clone, Copy)]
-pub enum Atom {
-    Reg(usize),
-    Const(usize)
-}
-
 pub const MOV: u8 = 0;
 pub const IEQ: u8 = 1;
 pub const IADD: u8 = 2;
@@ -59,13 +53,9 @@ impl Instr {
         (self.0 >> 16) as usize 
     }
     
-    pub fn atom_arg(self, index: usize) -> Atom {
+    pub fn atom_arg(self, index: usize) -> (u8, u8) {
         let arg = self.byte_arg(index);
-        match arg & ATOM_TAG_MASK {
-            0 => Atom::Reg(arg >> ATOM_INDEX_SHIFT),
-            1 => Atom::Const(arg >> ATOM_INDEX_SHIFT),
-            _ => unreachable!()     
-        }
+        ((arg & ATOM_TAG_MASK) as u8, (arg >> ATOM_INDEX_SHIFT) as u8)
     }
 }
 
