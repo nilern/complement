@@ -33,10 +33,10 @@ impl VM {
         }
     }
 
-    fn load_atom(&self, (tag, index): (u8, u8)) -> &ValueRef {
-        match tag {
-            0 => &self.regs[index as usize],
-            1 => &self.curr_proc.consts[index as usize],
+    fn load_atom(&self, atom: Atom) -> &ValueRef {
+        match atom.tag() {
+            0 => &self.regs[atom.index()],
+            1 => &self.curr_proc.consts[atom.index()],
             _ => unreachable!()     
         }
     }
@@ -46,174 +46,183 @@ impl VM {
             let instr = self.fetch()?;
             match instr.op() {
                 MOV => {
-                    let di = instr.byte_arg(0);
-                    let v = self.load_atom(instr.atom_arg(1)).clone();
-                    self.regs[di] = v;
+                    let (di, vi): (u8, Atom) = instr.parse();
+                    let v = self.load_atom(vi).clone();
+                    self.regs[di as usize] = v;
                 },
             
                 IEQ => {
-                    let di = instr.byte_arg(0);
-                    let a = isize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    self.regs[di] = Gc::new(Value::Bool(a == b));
+                    let (di, ai, bi): (u8, Atom, Atom) = instr.parse();
+                    let a = isize::try_from(&**self.load_atom(ai))?;
+                    let b = isize::try_from(&**self.load_atom(bi))?;
+                    self.regs[di as usize] = Gc::new(Value::Bool(a == b));
                 },
                 IADD => {
-                    let di = instr.byte_arg(0);
-                    let a = isize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    self.regs[di] = Gc::new(Value::Int(a + b));
+                    let (di, ai, bi): (u8, Atom, Atom) = instr.parse();
+                    let a = isize::try_from(&**self.load_atom(ai))?;
+                    let b = isize::try_from(&**self.load_atom(bi))?;
+                    self.regs[di as usize] = Gc::new(Value::Int(a + b));
                 },
                 ISUB => {
-                    let di = instr.byte_arg(0);
-                    let a = isize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    self.regs[di] = Gc::new(Value::Int(a - b));
+                    let (di, ai, bi): (u8, Atom, Atom) = instr.parse();
+                    let a = isize::try_from(&**self.load_atom(ai))?;
+                    let b = isize::try_from(&**self.load_atom(bi))?;
+                    self.regs[di as usize] = Gc::new(Value::Int(a - b));
                 },
                 IMUL => {
-                    let di = instr.byte_arg(0);
-                    let a = isize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let b = isize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
-                    self.regs[di] = Gc::new(Value::Int(a * b));
+                    let (di, ai, bi): (u8, Atom, Atom) = instr.parse();
+                    let a = isize::try_from(&**self.load_atom(ai))?;
+                    let b = isize::try_from(&**self.load_atom(bi))?;
+                    self.regs[di as usize] = Gc::new(Value::Int(a * b));
                 },
 
                 BOX_NEW => {
-                    let di = instr.byte_arg(0);
-                    self.regs[di] = Gc::new(Value::new_box());
+                    let di: u8 = instr.parse();
+                    self.regs[di as usize] = Gc::new(Value::new_box());
                 },
                 BOX_INIT => {
-                    let b: &VMBox = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let v = self.load_atom(instr.atom_arg(1));
+                    let (bi, vi): (u8, Atom) = instr.parse();
+                    let b: &VMBox = TryFrom::try_from(&*self.regs[bi as usize])?;
+                    let v = self.load_atom(vi);
                     *b.value.borrow_mut() = v.clone();
                 },
                 BOX_GET => {
-                    let di = instr.byte_arg(0);
+                    let (di, bi): (u8, Atom) = instr.parse();
                     let v = {
-                        let b: &VMBox = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let b: &VMBox = TryFrom::try_from(&**self.load_atom(bi))?;
                         b.value.borrow().clone()
                     };
-                    self.regs[di] = v;
+                    self.regs[di as usize] = v;
                 },
                 
                 TUPLE_NEW => {
-                    let di = instr.byte_arg(0);
-                    let len = isize::try_from(&**self.load_atom(instr.atom_arg(1)))? as usize;
-                    self.regs[di] = Gc::new(Value::new_tuple(len));
+                    let (di, li): (u8, Atom) = instr.parse();
+                    let len = isize::try_from(&**self.load_atom(li))? as usize;
+                    self.regs[di as usize] = Gc::new(Value::new_tuple(len));
                 },
                 TUPLE_INIT => {
-                    let t: &Tuple = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let v = self.load_atom(instr.atom_arg(2));
+                    let (ti, ii, vi): (u8, Atom, Atom) = instr.parse();
+                    let t: &Tuple = TryFrom::try_from(&*self.regs[ti as usize])?;
+                    let i = usize::try_from(&**self.load_atom(ii))?;
+                    let v = self.load_atom(vi);
                     *t.fields.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 TUPLE_LEN => {
-                    let di = instr.byte_arg(0);
+                    let (di, ti): (u8, Atom) = instr.parse();
                     let len = {
-                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(ti))?;
                         Gc::new(Value::Int(t.fields.borrow().len() as isize))
                     };
-                    self.regs[di] = len;
+                    self.regs[di as usize] = len;
                 },
                 TUPLE_GET => {
-                    let di = instr.byte_arg(0);
+                    let (di, ti, ii): (u8, Atom, Atom) = instr.parse();
                     let v = {
-                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        let t: &Tuple = TryFrom::try_from(&**self.load_atom(ti))?;
+                        let i = usize::try_from(&**self.load_atom(ii))?;
                         t.fields.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                     };
-                    self.regs[di] = v;
+                    self.regs[di as usize] = v;
                 },
 
                 FN_NEW => {
-                    let di = instr.byte_arg(0);
-                    let len = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    self.regs[di] = Gc::new(Value::new_fn(len));
+                    let (di, li): (u8, Atom) = instr.parse();
+                    let len = usize::try_from(&**self.load_atom(li))?;
+                    self.regs[di as usize] = Gc::new(Value::new_fn(len));
                 },
                 FN_INIT_CODE => {
-                    let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let cob = self.procs[instr.short_arg()].clone();
+                    let (fi, ci): (u8, u16) = instr.parse();
+                    let f: &Closure = TryFrom::try_from(&*self.regs[fi as usize])?;
+                    let cob = self.procs[ci as usize].clone();
                     let code = Gc::new(Value::new_code_ptr(cob, 0));
                     *f.code.borrow_mut() = code;
                 },
                 FN_INIT => {
-                    let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let v = self.load_atom(instr.atom_arg(2));
+                    let (fi, ii, vi): (u8, Atom, Atom) = instr.parse();
+                    let f: &Closure = TryFrom::try_from(&*self.regs[fi as usize])?;
+                    let i = usize::try_from(&**self.load_atom(ii))?;
+                    let v = self.load_atom(vi);
                     *f.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 FN_CODE => {
-                    let di = instr.byte_arg(0);
+                    let (di, fi): (u8, Atom) = instr.parse();
                     let code = {
-                        let f: &Closure = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let f: &Closure = TryFrom::try_from(&**self.load_atom(fi))?;
                         f.code.borrow().clone()
                     };
-                    self.regs[di] = code;
+                    self.regs[di as usize] = code;
                 },
                 FN_GET => {
-                    let di = instr.byte_arg(0);
+                    let (di, fi, ii): (u8, u8, Atom) = instr.parse();
                     let v = {
-                        let f: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
-                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        let f: &Closure = TryFrom::try_from(&*self.regs[fi as usize])?;
+                        let i = usize::try_from(&**self.load_atom(ii))?;
                         f.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                     };
-                    self.regs[di] = v; 
+                    self.regs[di as usize] = v; 
                 },
                 
                 CONT_NEW => {
-                    let di = instr.byte_arg(0);
-                    let len = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    self.regs[di] = Gc::new(Value::new_cont(len));
+                    let (di, li): (u8, Atom) = instr.parse();
+                    let len = usize::try_from(&**self.load_atom(li))?;
+                    self.regs[di as usize] = Gc::new(Value::new_cont(len));
                 },
                 CONT_INIT_CODE => {
-                    let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let offset = instr.short_arg() as isize;
-                    let cont_pc = (self.pc as isize + offset) as usize;
+                    let (ki, offset): (u8, i16) = instr.parse();
+                    let k: &Closure = TryFrom::try_from(&*self.regs[ki as usize])?;
+                    let cont_pc = (self.pc as isize + offset as isize) as usize;
                     let code = Gc::new(Value::new_code_ptr(self.curr_proc.clone(), cont_pc));
                     *k.code.borrow_mut() = code;
                 },
                 CONT_INIT => {
-                    let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
-                    let i = usize::try_from(&**self.load_atom(instr.atom_arg(1)))?;
-                    let v = self.load_atom(instr.atom_arg(2));
+                    let (ki, ii, vi): (u8, Atom, Atom) = instr.parse();
+                    let k: &Closure = TryFrom::try_from(&*self.regs[ki as usize])?;
+                    let i = usize::try_from(&**self.load_atom(ii))?;
+                    let v = self.load_atom(vi);
                     *k.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                 },
                 CONT_CODE => {
-                    let di = instr.byte_arg(0);
+                    let (di, ki): (u8, Atom) = instr.parse();
                     let code = {
-                        let k: &Closure = TryFrom::try_from(&**self.load_atom(instr.atom_arg(1)))?;
+                        let k: &Closure = TryFrom::try_from(&**self.load_atom(ki))?;
                         k.code.borrow().clone()
                     };
-                    self.regs[di] = code;
+                    self.regs[di as usize] = code;
                 },
                 CONT_GET => {
-                    let di = instr.byte_arg(0);
+                    let (di, ki, ii): (u8, u8, Atom) = instr.parse();
                     let v = {
-                        let k: &Closure = TryFrom::try_from(&*self.regs[instr.byte_arg(1)])?;
-                        let i = usize::try_from(&**self.load_atom(instr.atom_arg(2)))?;
+                        let k: &Closure = TryFrom::try_from(&*self.regs[ki as usize])?;
+                        let i = usize::try_from(&**self.load_atom(ii))?;
                         k.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                     };
-                    self.regs[di] = v; 
+                    self.regs[di as usize] = v; 
                 },
                 
                 DENV_NEW => {
-                    let di = instr.byte_arg(0);
-                    self.regs[di] = Gc::new(Value::new_denv());     
+                    let di: u8 = instr.parse();
+                    self.regs[di as usize] = Gc::new(Value::new_denv());     
                 },
 
                 BRF => {
-                    let cond = bool::try_from(&**self.load_atom(instr.atom_arg(0)))?;
+                    let (ci, offset): (Atom, i16) = instr.parse();
+                    let cond = bool::try_from(&**self.load_atom(ci))?;
                     if !cond {
-                        let offset = instr.short_arg() as isize;
-                        self.pc = (self.pc as isize + offset) as usize;
+                        self.pc = (self.pc as isize + offset as isize) as usize;
                     }  
                 }
 
                 IJMP => {
-                    let code: &CodePtr = TryFrom::try_from(&*self.regs[instr.byte_arg(0)])?;
+                    let ci: u8 = instr.parse();
+                    let code: &CodePtr = TryFrom::try_from(&*self.regs[ci as usize])?;
                     self.curr_proc = code.cob.clone();
                     self.pc = code.pc; 
                 },
 
-                HALT => return Ok(self.load_atom(instr.atom_arg(0)).clone()),
+                HALT => {
+                    let i: Atom = instr.parse();
+                    return Ok(self.load_atom(i).clone());
+                },
                 
                 op => panic!("unimplemented op {:?}", op)
             }
