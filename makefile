@@ -1,9 +1,25 @@
 .PHONY: all
-all: $(shell find -name "*.rkt" | sed -r "s/([^\.]*)\.rkt/\/compiled\1_rkt.zo/")
+all: compiler vm
 
-compiled/%_rkt.zo: %.rkt
-	raco make $<
+.PHONY: compiler
+compiler: complotc
+
+.PHONY: vm
+vm: vm/target/release/vm
 
 .PHONY: clean
-clean:
-	rm -r compiled
+clean: clean-compiler clean-vm
+
+.PHONY: clean-compiler
+clean-compiler:
+	rm -f complotc
+
+.PHONY: clean-vm
+clean-vm:
+	cd vm && cargo clean --release -p vm && cd ..
+
+complotc: $(shell find -name "*.rkt")
+	raco exe -o complotc main.rkt
+
+vm/target/release/vm: vm/src/main.rs
+	cd vm && cargo build --release && cd ..
