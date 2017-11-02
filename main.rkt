@@ -63,6 +63,7 @@
 
   (define (main)
     (define verbose #f)
+    (define eval-flag #f)
     (define input
       (command-line
         #:once-each
@@ -70,6 +71,9 @@
          (set! output (open-output-file output-filename #:mode 'binary #:exists 'truncate))]
         [("-v") "Verbose mode"
          (set! verbose #t)]
+        [("-e" "--eval") "Evaluate. Implies --verbose"
+         (set! verbose #t)
+         (set! eval-flag #t)]
         #:args input-filenames
         (match input-filenames
           ['() (current-input-port)]
@@ -81,7 +85,7 @@
       (define ir* (pass ir))
       (when verbose
         (pretty-print ir*)
-        (when eval
+        (when (and eval-flag eval)
           (display "\n---\n\n")
           (let ([value (time (eval ir*))])
             (pretty-print value)))
