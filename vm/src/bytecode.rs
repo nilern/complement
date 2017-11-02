@@ -38,41 +38,68 @@ pub const IJMP: u8 = 28;
 pub const HALT: u8 = 29;
 
 #[derive(Debug, Clone, Copy)]
+pub struct Reg(u8);
+
+impl From<u8> for Reg {
+    fn from(byte: u8) -> Reg { Reg(byte) }
+}
+
+impl From<Reg> for usize {
+    fn from(reg: Reg) -> usize { reg.0 as usize }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Offset(i16);
+
+impl From<i16> for Offset {
+    fn from(i: i16) -> Offset { Offset(i) }
+}
+
+impl From<Offset> for isize {
+    fn from(offset: Offset) -> isize { offset.0 as isize }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProcIndex(u16);
+
+impl From<u16> for ProcIndex {
+    fn from(i: u16) -> ProcIndex { ProcIndex(i) }
+}
+
+impl From<ProcIndex> for usize {
+    fn from(i: ProcIndex) -> usize { i.0 as usize }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Atom(u8);
 
 impl Atom {
-    pub fn tag(self) -> u8 {
-        (self.0 & ATOM_TAG_MASK) as u8 
-    }
+    pub fn tag(self) -> u8 { (self.0 & ATOM_TAG_MASK) as u8 }
 
-    pub fn index(self) -> usize {
-        self.0 as usize >> ATOM_INDEX_SHIFT
-    }
+    pub fn index(self) -> usize { self.0 as usize >> ATOM_INDEX_SHIFT }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Instr(u32);
 
 impl Instr {
-    pub fn op(self) -> u8 {
-        (self.0 & BYTE_MASK) as u8  
+    pub fn op(self) -> u8 { (self.0 & BYTE_MASK) as u8 }
+
+    fn byte_arg(self, index: usize) -> u32 {
+        (self.0 >> (8*(index + 1))) & BYTE_MASK
     }
 
-    fn reg_arg(self, index: usize) -> usize {
-        ((self.0 >> (8*(index + 1))) & BYTE_MASK) as usize   
-    }
+    fn u8_arg(self, index: usize) -> u8 { self.byte_arg(index) as u8 }
 
-    fn byte_arg(self, index: usize) -> u8 {
-        self.reg_arg(index) as u8
-    }
-
-    fn short_arg(self) -> usize {
-        (self.0 >> 16) as usize 
-    }
+    fn reg_arg(self, index: usize) -> Reg { Reg::from(self.u8_arg(index)) }
     
-    fn atom_arg(self, index: usize) -> Atom {
-        Atom(self.byte_arg(index))
-    }
+    fn atom_arg(self, index: usize) -> Atom { Atom(self.u8_arg(index)) }
+        
+    fn short_arg(self) -> u32 { self.0 >> 16 }
+    
+    fn offset_arg(self) -> Offset { Offset::from(self.short_arg() as i16) }
+        
+    fn proc_arg(self) -> ProcIndex { ProcIndex::from(self.short_arg() as u16) }
 }
 
 impl From<usize> for Instr {
@@ -85,46 +112,46 @@ pub trait ParseFields<T> {
     fn parse(self) -> T;
 }
 
-impl ParseFields<u8> for Instr {
-    fn parse(self) -> u8 { self.byte_arg(0) }
+impl ParseFields<Reg> for Instr {
+    fn parse(self) -> Reg { self.reg_arg(0) }
 }
 
 impl ParseFields<Atom> for Instr {
     fn parse(self) -> Atom { self.atom_arg(0) }
 }
 
-impl ParseFields<(u8, Atom)> for Instr {
-    fn parse(self) -> (u8, Atom) {
-        (self.byte_arg(0), self.atom_arg(1))
+impl ParseFields<(Reg, Atom)> for Instr {
+    fn parse(self) -> (Reg, Atom) {
+        (self.reg_arg(0), self.atom_arg(1))
     }
 }
 
-impl ParseFields<(u8, u16)> for Instr {
-    fn parse(self) -> (u8, u16) {
-        (self.byte_arg(0), self.short_arg() as u16)
+impl ParseFields<(Reg, ProcIndex)> for Instr {
+    fn parse(self) -> (Reg, ProcIndex) {
+        (self.reg_arg(0), self.proc_arg())
     }
 }
 
-impl ParseFields<(u8, i16)> for Instr {
-    fn parse(self) -> (u8, i16) {
-        (self.byte_arg(0), self.short_arg() as i16)
+impl ParseFields<(Reg, Offset)> for Instr {
+    fn parse(self) -> (Reg, Offset) {
+        (self.reg_arg(0), self.offset_arg())
     }
 }
 
-impl ParseFields<(u8, Atom, Atom)> for Instr {
-    fn parse(self) -> (u8, Atom, Atom) {
-        (self.byte_arg(0), self.atom_arg(1), self.atom_arg(2))
+impl ParseFields<(Reg, Atom, Atom)> for Instr {
+    fn parse(self) -> (Reg, Atom, Atom) {
+        (self.reg_arg(0), self.atom_arg(1), self.atom_arg(2))
     }
 }
 
-impl ParseFields<(u8, u8, Atom)> for Instr {
-    fn parse(self) -> (u8, u8, Atom) {
-        (self.byte_arg(0), self.byte_arg(1), self.atom_arg(2))
+impl ParseFields<(Reg, Reg, Atom)> for Instr {
+    fn parse(self) -> (Reg, Reg, Atom) {
+        (self.reg_arg(0), self.reg_arg(1), self.atom_arg(2))
     }
 }
 
-impl ParseFields<(Atom, i16)> for Instr {
-    fn parse(self) -> (Atom, i16) {
-        (self.atom_arg(0), self.short_arg() as i16)
+impl ParseFields<(Atom, Offset)> for Instr {
+    fn parse(self) -> (Atom, Offset) {
+        (self.atom_arg(0), self.offset_arg())
     }
 }
