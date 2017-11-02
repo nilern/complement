@@ -214,10 +214,6 @@ mod bytecode { /****************************************************************
     #[derive(Debug, Clone, Copy)]
     pub struct Reg(u8);
     
-    impl From<u8> for Reg {
-        fn from(byte: u8) -> Reg { Reg(byte) }
-    }
-    
     impl From<Reg> for usize {
         fn from(reg: Reg) -> usize { reg.0 as usize }
     }
@@ -225,20 +221,12 @@ mod bytecode { /****************************************************************
     #[derive(Debug, Clone, Copy)]
     pub struct Offset(i16);
     
-    impl From<i16> for Offset {
-        fn from(i: i16) -> Offset { Offset(i) }
-    }
-    
     impl From<Offset> for isize {
         fn from(offset: Offset) -> isize { offset.0 as isize }
     }
     
     #[derive(Debug, Clone, Copy)]
     pub struct ProcIndex(u16);
-    
-    impl From<u16> for ProcIndex {
-        fn from(i: u16) -> ProcIndex { ProcIndex(i) }
-    }
     
     impl From<ProcIndex> for usize {
         fn from(i: ProcIndex) -> usize { i.0 as usize }
@@ -266,19 +254,19 @@ mod bytecode { /****************************************************************
     
         fn u8_arg(self, index: usize) -> u8 { self.byte_arg(index) as u8 }
     
-        fn reg_arg(self, index: usize) -> Reg { Reg::from(self.u8_arg(index)) }
+        fn reg_arg(self, index: usize) -> Reg { Reg(self.u8_arg(index)) }
         
         fn atom_arg(self, index: usize) -> Atom { Atom(self.u8_arg(index)) }
             
         fn short_arg(self) -> u32 { self.0 >> 16 }
         
-        fn offset_arg(self) -> Offset { Offset::from(self.short_arg() as i16) }
+        fn offset_arg(self) -> Offset { Offset(self.short_arg() as i16) }
             
-        fn proc_arg(self) -> ProcIndex { ProcIndex::from(self.short_arg() as u16) }
+        fn proc_arg(self) -> ProcIndex { ProcIndex(self.short_arg() as u16) }
     }
     
     impl From<u32> for Instr {
-        fn from(bits: u32) -> Instr { Instr(bits as u32) }
+        fn from(bits: u32) -> Instr { Instr(bits) }
     }
     
     pub trait ParseFields<T> {
