@@ -156,6 +156,9 @@
 
 (define (serialize-usize n out)
   (write-bytes (integer->integer-bytes n 8 #f) out))
+  
+(define (serialize-instr instr out)
+  (write-bytes (integer->integer-bytes instr 4 #f) out))
 
 (define (serialize-raw-string str out)
   (serialize-usize (string-length str) out)
@@ -180,7 +183,7 @@
   (match-define ($code-object name consts instrs) proc)
   (serialize-raw-string (symbol->string name) out)
   (serialize-vector consts serialize-const out)
-  (serialize-vector instrs serialize-usize out)) ; FIXME: serialize-u32
+  (serialize-vector instrs serialize-instr out))
 
 (define (serialize-chunk chunk out)
   (match-define ($chunk regc procs entry) chunk)

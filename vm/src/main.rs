@@ -277,10 +277,8 @@ mod bytecode { /****************************************************************
         fn proc_arg(self) -> ProcIndex { ProcIndex::from(self.short_arg() as u16) }
     }
     
-    impl From<usize> for Instr {
-        fn from(bits: usize) -> Instr {
-            Instr(bits as u32)     
-        }
+    impl From<u32> for Instr {
+        fn from(bits: u32) -> Instr { Instr(bits as u32) }
     }
     
     pub trait ParseFields<T> {
@@ -582,6 +580,7 @@ mod vm { /**********************************************************************
 
 mod deserialize { /*******************************************************************************/
     use std::mem::size_of;
+    use std::ops::{Shl, AddAssign};
     use std::str::{self, Utf8Error};
     use gc::Gc;
 
@@ -630,18 +629,31 @@ mod deserialize { /*************************************************************
             }
             res     
         }
-    
-        #[cfg(target_endian = "little")]
-        fn parse_usize(&mut self) -> ParseResult<usize> {
-            let mut res = 0usize;
-            for i in 0..size_of::<usize>() {
-                 res += (self.pop().ok_or(ParseError::EOF)? as usize) << (8 * i);
+
+        #[cfg(target_endian = "big")]
+        fn parse_unsigned<T>(&mut self) -> ParseResult<T>
+            where T: From<u8> + Shl<usize, Output=T> + AddAssign<T>
+        {
+            let mut res = T::from(0u8);
+            for i in (0..size_of::<T>()).rev() {
+                res += T::from(self.pop().ok_or(ParseError::EOF)?) << (8 * i);
             }
-            Ok(res)
+            Ok(res)   
+        }
+        
+        #[cfg(target_endian = "little")]
+        fn parse_unsigned<T>(&mut self) -> ParseResult<T>
+            where T: From<u8> + Shl<usize, Output=T> + AddAssign<T>
+        {
+            let mut res = T::from(0u8);
+            for i in 0..size_of::<T>() {
+                res += T::from(self.pop().ok_or(ParseError::EOF)?) << (8 * i);
+            }
+            Ok(res)   
         }
         
         fn parse_isize(&mut self) -> ParseResult<isize> {
-            self.parse_usize().map(|n| n as isize)
+            self.parse_unsigned::<usize>().map(|n| n as isize)
         }
     
         fn parse_str(&mut self, len: usize) -> ParseResult<&str> {
@@ -667,12 +679,12 @@ mod deserialize { /*************************************************************
     }
     
     fn parse_string(input: &mut Input) -> ParseResult<String> {
-        let len = input.parse_usize()?;
+        let len = input.parse_unsigned::<usize>()?;
         input.parse_str(len).map(str::to_string)
     }
     
     fn parse_instr(input: &mut Input) -> ParseResult<Instr> {
-        input.parse_usize().map(Instr::from)
+        input.parse_unsigned::<u32>().map(Instr::from)
     }
     
     fn parse_const(input: &mut Input) -> ParseResult<Value> {
@@ -686,9 +698,9 @@ mod deserialize { /*************************************************************
     
     fn parse_proc(input: &mut Input) -> ParseResult<Proc> {
         let name = parse_string(input)?;
-        let consts_len = input.parse_usize()?;
+        let consts_len = input.parse_unsigned::<usize>()?;
         let consts = input.parse_vec(consts_len, |input| parse_const(input).map(Gc::new))?;
-        let instrs_len = input.parse_usize()?;
+        let instrs_len = input.parse_unsigned::<usize>()?;
         let instrs = input.parse_vec(instrs_len, parse_instr)?;
         Ok(Proc {
             name: name,
@@ -698,9 +710,9 @@ mod deserialize { /*************************************************************
     }
     
     pub fn parse_program(input: &mut Input) -> ParseResult<Program> {
-        let regc = input.parse_usize()?;
-        let entry = input.parse_usize()?;
-        let procs_len = input.parse_usize()?;
+        let regc = input.parse_unsigned::<usize>()?;
+        let entry = input.parse_unsigned::<usize>()?;
+        let procs_len = input.parse_unsigned::<usize>()?;
         let procs = input.parse_vec(procs_len, |input| parse_proc(input).map(Gc::new))?;
         Ok(Program {
             register_demand: regc,
