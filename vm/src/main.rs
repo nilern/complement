@@ -580,12 +580,11 @@ mod vm { /**********************************************************************
 
 mod deserialize { /*******************************************************************************/
     use std::mem::size_of;
-    use std::ops::{Shl, AddAssign};
     use std::str::{self, Utf8Error};
     use gc::Gc;
 
     use super::{Program, Proc};
-    use value::Value;
+    use value::{Value, ValueRef};
     use bytecode::Instr;
     
     #[derive(Debug)]
@@ -603,60 +602,23 @@ mod deserialize { /*************************************************************
     }
     
     impl<'a> Input<'a> {
-        pub fn new(bytes: &[u8]) -> Input {
-            Input {
-                slice: bytes,
-                index: 0    
-            }     
-        }
+        pub fn new(slice: &[u8]) -> Input { Input { slice, index: 0 } }
     
-        fn len(&self) -> usize {
-            self.slice.len() - self.index    
-        }
-    
-        fn peek(&self) -> Option<u8> {
-            if self.index < self.slice.len() {
-                Some(self.slice[self.index])    
-            } else {
-                None     
-            }
-        }
-    
-        fn pop(&mut self) -> Option<u8> {
-            let res = self.peek();
-            if res.is_some() {
-                self.index += 1;     
-            }
-            res     
-        }
+        fn len(&self) -> usize { self.slice.len() - self.index }
 
-        #[cfg(target_endian = "big")]
-        fn parse_unsigned<T>(&mut self) -> ParseResult<T>
-            where T: From<u8> + Shl<usize, Output=T> + AddAssign<T>
-        {
-            let mut res = T::from(0u8);
-            for i in (0..size_of::<T>()).rev() {
-                res += T::from(self.pop().ok_or(ParseError::EOF)?) << (8 * i);
+        fn parse_copy<T: Copy>(&mut self) -> ParseResult<T> {
+            let size = size_of::<T>();
+            if self.len() >= size {
+                let ptr: *const T = self.slice[self.index..].as_ptr() as _;
+                self.index += size;
+                Ok(unsafe { *ptr })
+            } else {
+                Err(ParseError::EOF)
             }
-            Ok(res)   
-        }
-        
-        #[cfg(target_endian = "little")]
-        fn parse_unsigned<T>(&mut self) -> ParseResult<T>
-            where T: From<u8> + Shl<usize, Output=T> + AddAssign<T>
-        {
-            let mut res = T::from(0u8);
-            for i in 0..size_of::<T>() {
-                res += T::from(self.pop().ok_or(ParseError::EOF)?) << (8 * i);
-            }
-            Ok(res)   
-        }
-        
-        fn parse_isize(&mut self) -> ParseResult<isize> {
-            self.parse_unsigned::<usize>().map(|n| n as isize)
         }
     
-        fn parse_str(&mut self, len: usize) -> ParseResult<&str> {
+        fn parse_str(&mut self) -> ParseResult<&str> {
+            let len = self.parse_copy::<usize>()?;
             if self.len() >= len {
                 let old_index = self.index;
                 self.index = self.index + len;
@@ -667,58 +629,42 @@ mod deserialize { /*************************************************************
             }
         }
     
-        fn parse_vec<T, F>(&mut self, len: usize, parse_elem: F) -> ParseResult<Vec<T>>
+        fn parse_vec<T, F>(&mut self, parse_elem: F) -> ParseResult<Vec<T>>
             where F: Fn(&mut Input) -> ParseResult<T>
         {
-            let mut res = Vec::with_capacity(len);
-            for _ in 0..len {
-                res.push(parse_elem(self)?);     
-            }
-            Ok(res)
+            let len = self.parse_copy::<usize>()?;
+            (0..len).map(|_| parse_elem(self)).collect()
         }
     }
     
     fn parse_string(input: &mut Input) -> ParseResult<String> {
-        let len = input.parse_unsigned::<usize>()?;
-        input.parse_str(len).map(str::to_string)
+        input.parse_str().map(str::to_string)
     }
     
     fn parse_instr(input: &mut Input) -> ParseResult<Instr> {
-        input.parse_unsigned::<u32>().map(Instr::from)
+        input.parse_copy::<u32>().map(Instr::from)
     }
     
-    fn parse_const(input: &mut Input) -> ParseResult<Value> {
-        let tag = input.pop().ok_or(ParseError::EOF)?;
-        match tag {
-            0 => input.parse_isize().map(Value::Int),
-            1 => parse_string(input).map(Value::Symbol),
+    fn parse_const(input: &mut Input) -> ParseResult<ValueRef> {
+        match input.parse_copy::<u8>()? {
+            0 => input.parse_copy::<isize>().map(|i| Gc::new(Value::Int(i))),
+            1 => parse_string(input).map(|s| Gc::new(Value::Symbol(s))),
             _ => unimplemented!()
         }
     }
     
-    fn parse_proc(input: &mut Input) -> ParseResult<Proc> {
+    fn parse_proc(input: &mut Input) -> ParseResult<Gc<Proc>> {
         let name = parse_string(input)?;
-        let consts_len = input.parse_unsigned::<usize>()?;
-        let consts = input.parse_vec(consts_len, |input| parse_const(input).map(Gc::new))?;
-        let instrs_len = input.parse_unsigned::<usize>()?;
-        let instrs = input.parse_vec(instrs_len, parse_instr)?;
-        Ok(Proc {
-            name: name,
-            consts: consts,
-            instrs: instrs     
-        })
+        let consts = input.parse_vec(parse_const)?;
+        let instrs = input.parse_vec(parse_instr)?;
+        Ok(Gc::new(Proc { name, consts, instrs }))
     }
     
     pub fn parse_program(input: &mut Input) -> ParseResult<Program> {
-        let regc = input.parse_unsigned::<usize>()?;
-        let entry = input.parse_unsigned::<usize>()?;
-        let procs_len = input.parse_unsigned::<usize>()?;
-        let procs = input.parse_vec(procs_len, |input| parse_proc(input).map(Gc::new))?;
-        Ok(Program {
-            register_demand: regc,
-            procs: procs,
-            entry: entry 
-        })    
+        let register_demand = input.parse_copy::<usize>()?;
+        let entry = input.parse_copy::<usize>()?;
+        let procs = input.parse_vec(parse_proc)?;
+        Ok(Program { register_demand, procs, entry })    
     }
 }
 
