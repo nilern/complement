@@ -1,8 +1,6 @@
 #lang racket/base
 
-(provide (struct-out $chunk) serialize-chunk (struct-out $code-object)
-         op-encodings op-decodings encode-stmt encode-transfer
-         decode-op decode-byte-arg decode-short-arg decode-atom-arg)
+(provide (struct-out $chunk) serialize-chunk (struct-out $code-object) encode-stmt encode-transfer)
 (require racket/match
          data/gvector
          (only-in srfi/26 cute) (only-in threading ~>)
@@ -44,10 +42,6 @@
 (define op-encodings
   (for/hash ([(op i) (in-indexed ops)])
     (values op i)))
-
-(define op-decodings
-  (for/hash ([(k v) op-encodings])
-    (values v k)))
 
 (define encode-op (cute hash-ref op-encodings <>))
 
@@ -138,21 +132,6 @@
     [('__halt (list a))
      (~> (ash (encode-arg-atom a) arg-atom-shift)
          (bit-or (encode-op op)))]))
-
-(define (decode-op instr)
-  (hash-ref op-decodings (bit-and instr op-mask)))
-
-(define (decode-byte-arg instr index)
-  (~> (ash instr (- (* (+ index 1) arg-atom-shift)))
-      (bit-and arg-atom-mask)))
-
-(define (decode-short-arg instr)
-  (ash instr (- short-arg-shift)))
-
-(define (decode-atom-arg instr index)
-  (define bits (decode-byte-arg instr index))
-  (values (bit-and bits arg-atom-tag-mask)
-          (ash bits (- arg-atom-index-shift))))
 
 (define (serialize-usize n out)
   (write-bytes (integer->integer-bytes n 8 #f) out))

@@ -8,8 +8,7 @@
            "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
            (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
            (only-in "bytecode.rkt" serialize-chunk)
-           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt"
-           (prefix-in vm: "vm.rkt"))
+           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
 
   (define output (current-output-port))
   (define cps-ltab (make-hash))
@@ -58,7 +57,7 @@
           #f
           #f
           #f
-          vm:run
+          #f
           #f))
 
   (define (main)
