@@ -63,9 +63,11 @@ mod value { /*******************************************************************
     #[derive(Debug, Trace, Finalize)]
     pub enum Value {
         Int(isize),
+        Char(char),
         Bool(bool),
         
         Symbol(String),
+        String(String),
     
         Tuple(Tuple),
     
@@ -616,6 +618,23 @@ mod deserialize { /*************************************************************
                 Err(ParseError::EOF) 
             }
         }
+        
+        fn parse_char(&mut self) -> ParseResult<char> {
+            match str::from_utf8(&self.slice[self.index..]) {
+                Ok(str) => {
+                    let mut cs = str.char_indices();
+                    if let Some((_, c)) = cs.next() {
+                        if let Some((i, _)) = cs.next() {
+                            self.index += i;
+                        }
+                        Ok(c)
+                    } else {
+                        Err(ParseError::EOF)
+                    }
+                },
+                Err(err) => Err(ParseError::Utf8(err))
+            }
+        }
     
         fn parse_vec<T, F>(&mut self, parse_elem: F) -> ParseResult<Vec<T>>
             where F: Fn(&mut Input) -> ParseResult<T>
@@ -636,7 +655,9 @@ mod deserialize { /*************************************************************
     fn parse_const(input: &mut Input) -> ParseResult<ValueRef> {
         match input.parse_copy::<u8>()? {
             0 => input.parse_copy::<isize>().map(|i| Gc::new(Value::Int(i))),
-            1 => parse_string(input).map(|s| Gc::new(Value::Symbol(s))),
+            1 => input.parse_char().map(|c| Gc::new(Value::Char(c))),
+            2 => parse_string(input).map(|s| Gc::new(Value::Symbol(s))),
+            3 => parse_string(input).map(|s| Gc::new(Value::String(s))),
             _ => unimplemented!()
         }
     }

@@ -14,7 +14,7 @@
              (not (equal? (substring name-str 0 2) "__"))))))
 
 (define (const? v)
-  (or (number? v) (char? v) (boolean? v) (symbol? v)))
+  (or (number? v) (char? v) (boolean? v) (string? v) (symbol? v)))
 
 (define (primop? name)
   (and (symbol? name)

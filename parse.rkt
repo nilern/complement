@@ -11,8 +11,8 @@
 (provide parse)
 
 (define-tokens payload-toks
-  (LEX DYN PRIMOP
-   INT))
+  (LEX DYN PRIMOP STRING
+   INT CHAR))
 (define-empty-tokens empty-toks
   (EOF
    LPAREN RPAREN LBRACE RBRACE
@@ -36,6 +36,10 @@
     ["=>" '=>]
     ["=" '=]
     ["|" '\|]
+    [(:: "\"" (:* (complement "\"")) "\"")
+     (token-STRING (substring lexeme 1 (- (string-length lexeme) 1)))]
+    [(:: "'" (complement (:: any-string "'" any-string)) "'")
+     (token-CHAR (string-ref lexeme 1))]
     [(:: "__" (:+ (:or lower-letter upper-letter)))
      (token-PRIMOP (string->symbol lexeme))]
     [(:: "$" (:+ (:or lower-letter upper-letter)))
@@ -143,7 +147,9 @@
         [(datom) (with-output-language (Cst Expr) `(const ,$1))])
 
       (datom
-        [(INT) $1]))))
+        [(INT) $1]
+        [(CHAR) $1]
+        [(STRING) $1]))))
 
 (define (parse ip)
   (parse-expr (λ () (lex ip))))

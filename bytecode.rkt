@@ -153,9 +153,15 @@
     [(fixnum? const)
      (write-byte 0 out)
      (serialize-usize const out)]
-    [(symbol? const)
+    [(char? const)
      (write-byte 1 out)
+     (write-char const out)]
+    [(symbol? const)
+     (write-byte 2 out)
      (serialize-raw-string (symbol->string const) out)]
+    [(string? const)
+     (write-byte 3 out)
+     (serialize-raw-string const out)]
     [else (error "unable to serialize constant" const)]))
 
 (define (serialize-proc proc out)
