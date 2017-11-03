@@ -27,6 +27,8 @@
 (define lex
   (lexer-src-pos
     [whitespace (return-without-pos (lex input-port))] ; skip
+    [(:: "#" (:* (complement (:: any-string "\n" any-string))) "\n")
+     (return-without-pos (lex input-port))] ; skip line comment
     [(eof) 'EOF]
     ["(" 'LPAREN]
     [")" 'RPAREN]
@@ -36,7 +38,7 @@
     ["=>" '=>]
     ["=" '=]
     ["|" '\|]
-    [(:: "\"" (:* (complement "\"")) "\"")
+    [(:: "\"" (:* (complement (:: any-string "\"" any-string))) "\"")
      (token-STRING (substring lexeme 1 (- (string-length lexeme) 1)))]
     [(:: "'" (complement (:: any-string "'" any-string)) "'")
      (token-CHAR (string-ref lexeme 1))]
