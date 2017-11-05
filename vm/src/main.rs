@@ -179,39 +179,49 @@ mod bytecode { /****************************************************************
     const ATOM_TAG_MASK: u8 = (1 << ATOM_INDEX_SHIFT) - 1;
     
     pub const MOV: u8 = 0;
+    
     pub const IEQ: u8 = 1;
-    pub const IADD: u8 = 2;
-    pub const ISUB: u8 = 3;
-    pub const IMUL: u8 = 4;
+    pub const ILT: u8 = 2;
+    pub const ILE: u8 = 3;
+    pub const IGT: u8 = 4;
+    pub const IGE: u8 = 5;
+
+    pub const INEG: u8 = 6;
+    pub const IADD: u8 = 7;
+    pub const ISUB: u8 = 8;
+    pub const IMUL: u8 = 9;
+    pub const IDIV: u8 = 10;
+    pub const IREM: u8 = 11;
+    pub const IMOD: u8 = 12;
+
+    pub const BOX_NEW : u8  = 13;
+    pub const BOX_INIT: u8 = 14;
+    pub const BOX_GET : u8  = 15;
     
-    pub const BOX_NEW: u8 = 5;
-    pub const BOX_INIT: u8 = 6;
-    pub const BOX_GET: u8 = 7;
+    pub const TUPLE_NEW : u8 = 16;
+    pub const TUPLE_INIT: u8 = 17;
+    pub const TUPLE_LEN : u8 = 18;
+    pub const TUPLE_GET : u8 = 19;
     
-    pub const TUPLE_NEW: u8 = 8;
-    pub const TUPLE_INIT: u8 = 9;
-    pub const TUPLE_LEN: u8 = 10;
-    pub const TUPLE_GET: u8 = 11;
+    pub const FN_NEW      : u8 = 20;
+    pub const FN_INIT_CODE: u8 = 21;
+    pub const FN_INIT     : u8 = 22;
+    pub const FN_CODE     : u8 = 23;
+    pub const FN_GET      : u8 = 24;
     
-    pub const FN_NEW: u8 = 12;
-    pub const FN_INIT_CODE: u8 = 13;
-    pub const FN_INIT: u8 = 14;
-    pub const FN_CODE: u8 = 15;
-    pub const FN_GET: u8 = 16;
+    pub const CONT_NEW      : u8 = 25;
+    pub const CONT_INIT_CODE: u8 = 26;
+    pub const CONT_INIT     : u8 = 27;
+    pub const CONT_CODE     : u8 = 28;
+    pub const CONT_GET      : u8 = 29;
     
-    pub const CONT_NEW: u8 = 17;
-    pub const CONT_INIT_CODE: u8 = 18;
-    pub const CONT_INIT: u8 = 19;
-    pub const CONT_CODE: u8 = 20;
-    pub const CONT_GET: u8 = 21;
+    pub const DENV_NEW: u8 = 30;
     
-    pub const DENV_NEW: u8 = 22;
+    pub const BRF: u8 = 34;
     
-    pub const BRF: u8 = 26;
+    pub const IJMP: u8 = 36;
     
-    pub const IJMP: u8 = 28;
-    
-    pub const HALT: u8 = 29;
+    pub const HALT: u8 = 37;
     
     #[derive(Debug, Clone, Copy)]
     pub struct Reg(u8);
@@ -391,6 +401,37 @@ mod vm { /**********************************************************************
                         let b = isize::try_from(&**self.atom(bi))?;
                         *self.reg_mut(di) = Gc::new(Value::Bool(a == b));
                     },
+                    ILT => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Bool(a < b));
+                    },
+                    ILE => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Bool(a <= b));
+                    },
+                    IGT => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Bool(a > b));
+                    },
+                    IGE => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Bool(a >= b));
+                    },
+
+
+                    INEG => {
+                        let (di, ni): (Reg, Atom) = instr.parse();
+                        let n = isize::try_from(&**self.atom(ni))?;
+                        *self.reg_mut(di) = Gc::new(Value::Int(-n));
+                    },
                     IADD => {
                         let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
                         let a = isize::try_from(&**self.atom(ai))?;
@@ -408,6 +449,24 @@ mod vm { /**********************************************************************
                         let a = isize::try_from(&**self.atom(ai))?;
                         let b = isize::try_from(&**self.atom(bi))?;
                         *self.reg_mut(di) = Gc::new(Value::Int(a * b));
+                    },
+                    IDIV => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Int(a / b));
+                    },
+                    IREM => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Int(a % b));
+                    },
+                    IMOD => {
+                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
+                        let a = isize::try_from(&**self.atom(ai))?;
+                        let b = isize::try_from(&**self.atom(bi))?;
+                        *self.reg_mut(di) = Gc::new(Value::Int((a % b + b) % b));
                     },
     
                     BOX_NEW => {

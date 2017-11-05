@@ -29,7 +29,8 @@
 
 (define ops
   '(__mov
-    __iEq __iAdd __iSub __iMul
+    __iEq __iLt __iLe __iGt __iGe
+    __iNeg __iAdd __iSub __iMul __iDiv __iRem __iMod
     __boxNew __boxSet __boxGet
     __tupleNew __tupleInit __tupleLength __tupleGet
     __fnNew __fnInitCode __fnInit __fnCode __fnGet
@@ -70,11 +71,14 @@
       [((or '__boxNew '__denvNew) '())
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__mov
+            '__iNeg
             '__boxGet '__tupleNew '__tupleLength '__fnNew '__fnCode '__contNew '__contCode
             '__raise)
         (list _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
-      [((or '__iEq '__iAdd '__iSub '__iMul '__tupleGet '__fnGet '__contGet) (list _ _))
+      [((or '__iEq '__iLt '__iLe '__iGt '__iGe
+            '__iAdd '__iSub '__iMul '__iDiv '__iRem '__iMod
+            '__tupleGet '__fnGet '__contGet) (list _ _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])
     (match* (op args)
