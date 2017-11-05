@@ -178,50 +178,50 @@ mod bytecode { /****************************************************************
     const ATOM_INDEX_SHIFT: usize = 1;
     const ATOM_TAG_MASK: u8 = (1 << ATOM_INDEX_SHIFT) - 1;
     
-    pub const MOV: u8 = 0;
+    pub const MOV: u8 = 0x00;
     
-    pub const IEQ: u8 = 1;
-    pub const ILT: u8 = 2;
-    pub const ILE: u8 = 3;
-    pub const IGT: u8 = 4;
-    pub const IGE: u8 = 5;
+    pub const IEQ: u8 = 0x10;
+    pub const ILT: u8 = 0x11;
+    pub const ILE: u8 = 0x12;
+    pub const IGT: u8 = 0x13;
+    pub const IGE: u8 = 0x14;
 
-    pub const INEG: u8 = 6;
-    pub const IADD: u8 = 7;
-    pub const ISUB: u8 = 8;
-    pub const IMUL: u8 = 9;
-    pub const IDIV: u8 = 10;
-    pub const IREM: u8 = 11;
-    pub const IMOD: u8 = 12;
+    pub const INEG: u8 = 0x20;
+    pub const IADD: u8 = 0x21;
+    pub const ISUB: u8 = 0x22;
+    pub const IMUL: u8 = 0x23;
+    pub const IDIV: u8 = 0x24;
+    pub const IREM: u8 = 0x25;
+    pub const IMOD: u8 = 0x26;
 
-    pub const BOX_NEW : u8  = 13;
-    pub const BOX_INIT: u8 = 14;
-    pub const BOX_GET : u8  = 15;
+    pub const BOX_NEW : u8 = 0x30;
+    pub const BOX_INIT: u8 = 0x31;
+    pub const BOX_GET : u8 = 0x32;
     
-    pub const TUPLE_NEW : u8 = 16;
-    pub const TUPLE_INIT: u8 = 17;
-    pub const TUPLE_LEN : u8 = 18;
-    pub const TUPLE_GET : u8 = 19;
+    pub const TUPLE_NEW : u8 = 0x40;
+    pub const TUPLE_INIT: u8 = 0x41;
+    pub const TUPLE_LEN : u8 = 0x42;
+    pub const TUPLE_GET : u8 = 0x43;
     
-    pub const FN_NEW      : u8 = 20;
-    pub const FN_INIT_CODE: u8 = 21;
-    pub const FN_INIT     : u8 = 22;
-    pub const FN_CODE     : u8 = 23;
-    pub const FN_GET      : u8 = 24;
+    pub const FN_NEW      : u8 = 0x50;
+    pub const FN_INIT_CODE: u8 = 0x51;
+    pub const FN_INIT     : u8 = 0x52;
+    pub const FN_CODE     : u8 = 0x53;
+    pub const FN_GET      : u8 = 0x54;
     
-    pub const CONT_NEW      : u8 = 25;
-    pub const CONT_INIT_CODE: u8 = 26;
-    pub const CONT_INIT     : u8 = 27;
-    pub const CONT_CODE     : u8 = 28;
-    pub const CONT_GET      : u8 = 29;
+    pub const CONT_NEW      : u8 = 0x60;
+    pub const CONT_INIT_CODE: u8 = 0x61;
+    pub const CONT_INIT     : u8 = 0x62;
+    pub const CONT_CODE     : u8 = 0x63;
+    pub const CONT_GET      : u8 = 0x64;
     
-    pub const DENV_NEW: u8 = 30;
+    pub const DENV_NEW: u8 = 0x70;
     
-    pub const BRF: u8 = 34;
+    pub const BRF: u8 = 0x81;
     
-    pub const IJMP: u8 = 36;
+    pub const IJMP: u8 = 0x91;
     
-    pub const HALT: u8 = 37;
+    pub const HALT: u8 = 0xA0;
     
     #[derive(Debug, Clone, Copy)]
     pub struct Reg(u8);

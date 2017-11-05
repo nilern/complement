@@ -28,21 +28,22 @@
 (define arg-atom-tag-mask #b1)
 
 (define ops
-  '(__mov
-    __iEq __iLt __iLe __iGt __iGe
-    __iNeg __iAdd __iSub __iMul __iDiv __iRem __iMod
-    __boxNew __boxSet __boxGet
-    __tupleNew __tupleInit __tupleLength __tupleGet
-    __fnNew __fnInitCode __fnInit __fnCode __fnGet
-    __contNew __contInitCode __contInit __contCode __contGet
-    __denvNew __denvPush __denvGet
-    __br __brf
-    __jmp __ijmp
-    __halt __raise))
+  '((__mov)
+    (__iEq __iLt __iLe __iGt __iGe)
+    (__iNeg __iAdd __iSub __iMul __iDiv __iRem __iMod)
+    (__boxNew __boxSet __boxGet)
+    (__tupleNew __tupleInit __tupleLength __tupleGet)
+    (__fnNew __fnInitCode __fnInit __fnCode __fnGet)
+    (__contNew __contInitCode __contInit __contCode __contGet)
+    (__denvNew __denvPush __denvGet)
+    (__br __brf)
+    (__jmp __ijmp)
+    (__halt __raise)))
 
 (define op-encodings
-  (for/hash ([(op i) (in-indexed ops)])
-    (values op i)))
+  (for*/hash ([(op-group i) (in-indexed ops)]
+             [(op j) (in-indexed op-group)])
+    (values op (bit-or (ash i 4) j))))
 
 (define encode-op (cute hash-ref op-encodings <>))
 
