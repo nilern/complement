@@ -5,12 +5,12 @@
          nanopass/base
          "langs.rkt" (prefix-in cfg: "cfg.rkt") (prefix-in kenv: (submod "util.rkt" cont-env)))
 
-;; TODO: DynEnv, Fn, Cont creations
+;; TODO: DynEnv creation
 (define-pass select-instructions : CPCPS (ir) -> RegisterizableCPCPS ()
   (definitions
     (define (varargs-primop? op)
       (case op
-        [(__tupleNew __fnNew __contNew __denvPush) #t]
+        [(__tupleNew __fnNew __contNew __recNew __denvPush) #t]
         [else #f]))
   
     (define (emit-stmt name expr)
@@ -23,7 +23,7 @@
       (with-output-language (RegisterizableCPCPS Expr)
         (case op
           [(__tupleNew) (emit-stmt name `(primcall1 ,op (const ,len)))]
-          [(__fnNew __contNew) (emit-stmt name `(primcall1 ,op (const ,(- len 1))))])))
+          [(__fnNew __contNew __recNew) (emit-stmt name `(primcall1 ,op (const ,(- len 1))))])))
 
     (define (emit-compound-step name op index atom)
       (with-output-language (RegisterizableCPCPS Expr)
@@ -36,7 +36,11 @@
           [(__contNew)
            (if (= index 0)
              `(primcall2 __contInitCode (lex ,name) ,atom)
-             `(primcall3 __contInit (lex ,name) (const ,(- index 1)) ,atom))]))))
+             `(primcall3 __contInit (lex ,name) (const ,(- index 1)) ,atom))]
+          [(__recNew)
+           (if (= index 0)
+             `(primcall2 __recInitType (lex ,name) ,atom)
+             `(primcall3 __recInit (lex ,name) (const ,(- index 1)) ,atom))]))))
 
   (Cont : Cont (ir) -> Cont ()
     [(cont (,n* ...) ,s* ... ,[t])

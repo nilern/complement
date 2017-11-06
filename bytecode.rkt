@@ -36,6 +36,7 @@
     (__fnNew __fnInitCode __fnInit __fnCode __fnGet)
     (__contNew __contInitCode __contInit __contCode __contGet)
     (__denvNew __denvPush __denvGet)
+    (__recNew __recInitType __recInit __recType __recGet)
     (__br __brf)
     (__jmp __ijmp)
     (__halt __raise)))
@@ -74,12 +75,13 @@
       [((or '__mov
             '__iNeg
             '__boxGet '__tupleNew '__tupleLength '__fnNew '__fnCode '__contNew '__contCode
+            '__recNew '__recType
             '__raise)
         (list _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__iEq '__iLt '__iLe '__iGt '__iGe
             '__iAdd '__iSub '__iMul '__iDiv '__iRem '__iMod
-            '__tupleGet '__fnGet '__contGet) (list _ _))
+            '__tupleGet '__fnGet '__contGet '__recGet) (list _ _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])
     (match* (op args)
@@ -108,7 +110,7 @@
            (bit-or (ash dest-reg op-width))
            (bit-or (encode-op op)))]
       [((or '__boxSet
-            '__tupleInit '__fnInit '__contInit)
+            '__tupleInit '__fnInit '__contInit '__recInitType '__recInit)
         (cons dest args))
        (define dest-reg
          (nanopass-case (ResolvedAsm Atom) dest

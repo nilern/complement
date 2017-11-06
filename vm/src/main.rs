@@ -59,6 +59,12 @@ mod value { /*******************************************************************
         pub code: GcCell<Gc<Value>>,
         pub env: GcCell<Vec<ValueRef>>
     }
+
+    #[derive(Debug, Trace, Finalize)]
+    pub struct Record {
+        pub typ: GcCell<Gc<Value>>,
+        pub fields: GcCell<Vec<ValueRef>>
+    }
     
     #[derive(Debug, Trace, Finalize)]
     pub enum Value {
@@ -78,7 +84,9 @@ mod value { /*******************************************************************
         Fn(Closure),
         Cont(Closure),
         
-        Denv(HashMap<String, ValueRef>)
+        Denv(HashMap<String, ValueRef>),
+
+        Record(Record)
     }
     
     impl Value {
@@ -113,6 +121,13 @@ mod value { /*******************************************************************
     
         pub fn new_denv() -> Value {
             Value::Denv(HashMap::new())     
+        }
+
+        pub fn new_record(len: usize) -> Value {
+            Value::Record(Record {
+                typ: GcCell::new(Gc::new(Value::Null)),
+                fields: GcCell::new(vec![Gc::new(Value::Null); len])
+            })
         }
     }
     
@@ -171,6 +186,14 @@ mod value { /*******************************************************************
             if let &Value::Cont(ref k) = v { Ok(k) } else { Err(VMError::Type) }
         }
     }
+        
+    impl<'a> TryFrom<&'a Value> for &'a Record {
+        type Error = VMError;
+    
+        fn try_from(v: &Value) -> Result<&Record, VMError> {
+            if let &Value::Record(ref r) = v { Ok(r) } else { Err(VMError::Type) }
+        }
+    }
 }
 
 mod bytecode { /**********************************************************************************/
@@ -216,12 +239,18 @@ mod bytecode { /****************************************************************
     pub const CONT_GET      : u8 = 0x64;
     
     pub const DENV_NEW: u8 = 0x70;
+
+    pub const REC_NEW      : u8 = 0x80;
+    pub const REC_INIT_TYPE: u8 = 0x81;
+    pub const REC_INIT     : u8 = 0x82;
+    pub const REC_TYPE     : u8 = 0x83;
+    pub const REC_GET      : u8 = 0x84;
     
-    pub const BRF: u8 = 0x81;
+    pub const BRF: u8 = 0x91;
     
-    pub const IJMP: u8 = 0x91;
+    pub const IJMP: u8 = 0xA1;
     
-    pub const HALT: u8 = 0xA0;
+    pub const HALT: u8 = 0xB0;
     
     #[derive(Debug, Clone, Copy)]
     pub struct Reg(u8);
@@ -426,7 +455,7 @@ mod vm { /**********************************************************************
                         *self.reg_mut(di) = Gc::new(Value::Bool(a >= b));
                     },
 
-
+                    // FIXME: over/underflow, division by zero
                     INEG => {
                         let (di, ni): (Reg, Atom) = instr.parse();
                         let n = isize::try_from(&**self.atom(ni))?;
@@ -596,13 +625,49 @@ mod vm { /**********************************************************************
                         let di: Reg = instr.parse();
                         *self.reg_mut(di) = Gc::new(Value::new_denv());     
                     },
-    
+                    
+                    REC_NEW => {
+                        let (di, li): (Reg, Atom) = instr.parse();
+                        let len = usize::try_from(&**self.atom(li))?;
+                        *self.reg_mut(di) = Gc::new(Value::new_record(len));
+                    },
+                    REC_INIT_TYPE => {
+                        let (ri, ti): (Reg, Atom) = instr.parse();
+                        let r: &Record = TryFrom::try_from(&**self.reg(ri))?;
+                        let t = self.atom(ti).clone();
+                        *r.typ.borrow_mut() = t;
+                    },
+                    REC_INIT => {
+                        let (ri, ii, vi): (Reg, Atom, Atom) = instr.parse();
+                        let r: &Record = TryFrom::try_from(&**self.reg(ri))?;
+                        let i = usize::try_from(&**self.atom(ii))?;
+                        let v = self.atom(vi);
+                        *r.fields.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
+                    },
+                    REC_TYPE => {
+                        let (di, ri): (Reg, Atom) = instr.parse();
+                        let t = {
+                            let r: &Record = TryFrom::try_from(&**self.atom(ri))?;
+                            r.typ.borrow().clone()
+                        };
+                        *self.reg_mut(di) = t;
+                    },
+                    REC_GET => {
+                        let (di, ri, ii): (Reg, Atom, Atom) = instr.parse();
+                        let v = {
+                            let r: &Record = TryFrom::try_from(&**self.atom(ri))?;
+                            let i = usize::try_from(&**self.atom(ii))?;
+                            r.fields.borrow().get(i).ok_or(VMError::Bounds)?.clone()
+                        };
+                        *self.reg_mut(di) = v;
+                    },
+                    
                     BRF => {
                         let (ci, offset): (Atom, Offset) = instr.parse();
                         let cond = bool::try_from(&**self.atom(ci))?;
                         if !cond {
                             self.pc = self.offset_pc(offset);
-                        }  
+                        }
                     }
     
                     IJMP => {
