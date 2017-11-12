@@ -1,4 +1,4 @@
-#![feature(try_from)]
+#![feature(unboxed_closures, try_from)]
 
 #[macro_use]
 extern crate gc_derive;
@@ -197,6 +197,8 @@ mod value { /*******************************************************************
 }
 
 mod bytecode { /**********************************************************************************/
+    use std::marker::PhantomData;
+
     const BYTE_MASK: u32 = (1 << 8) - 1;
     const ATOM_INDEX_SHIFT: usize = 1;
     const ATOM_TAG_MASK: u8 = (1 << ATOM_INDEX_SHIFT) - 1;
@@ -251,12 +253,30 @@ mod bytecode { /****************************************************************
     pub const IJMP: u8 = 0xA1;
     
     pub const HALT: u8 = 0xB0;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct AnySrcReg(u8);
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct SrcReg<T>(AnySrcReg, PhantomData<T>);
+        
+    impl<T> From<AnySrcReg> for SrcReg<T> {
+        fn from(reg: AnySrcReg) -> SrcReg<T> { SrcReg(reg, PhantomData::default()) }
+    }
+
+    impl<T> From<SrcReg<T>> for AnySrcReg {
+        fn from(reg: SrcReg<T>) -> AnySrcReg { reg.0 }
+    }
+        
+    impl From<AnySrcReg> for usize {
+        fn from(reg: AnySrcReg) -> usize { reg.0 as usize }
+    }
     
     #[derive(Debug, Clone, Copy)]
-    pub struct Reg(u8);
+    pub struct DestReg(u8);
     
-    impl From<Reg> for usize {
-        fn from(reg: Reg) -> usize { reg.0 as usize }
+    impl From<DestReg> for usize {
+        fn from(reg: DestReg) -> usize { reg.0 as usize }
     }
     
     #[derive(Debug, Clone, Copy)]
@@ -274,12 +294,23 @@ mod bytecode { /****************************************************************
     }
     
     #[derive(Debug, Clone, Copy)]
-    pub struct Atom(u8);
-    
-    impl Atom {
+    pub struct AnyAtom(u8);
+        
+    impl AnyAtom {
         pub fn tag(self) -> u8 { (self.0 & ATOM_TAG_MASK) as u8 }
     
         pub fn index(self) -> usize { self.0 as usize >> ATOM_INDEX_SHIFT }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct Atom<T>(AnyAtom, PhantomData<T>);
+
+    impl<T> From<AnyAtom> for Atom<T> {
+        fn from(atom: AnyAtom) -> Atom<T> { Atom(atom, PhantomData::default()) }
+    }
+
+    impl<T> From<Atom<T>> for AnyAtom {
+        fn from(atom: Atom<T>) -> AnyAtom { atom.0 }
     }
     
     #[derive(Debug, Clone, Copy)]
@@ -295,9 +326,11 @@ mod bytecode { /****************************************************************
     
         fn u8_arg(self, index: usize) -> u8 { self.byte_arg(index) as u8 }
     
-        fn reg_arg(self, index: usize) -> Reg { Reg(self.u8_arg(index)) }
+        fn reg_arg(self, index: usize) -> DestReg { DestReg(self.u8_arg(index)) }
+            
+        fn src_reg_arg(self, index: usize) -> AnySrcReg { AnySrcReg(self.u8_arg(index)) }
         
-        fn atom_arg(self, index: usize) -> Atom { Atom(self.u8_arg(index)) }
+        fn atom_arg(self, index: usize) -> AnyAtom { AnyAtom(self.u8_arg(index)) }
             
         fn short_arg(self) -> u32 { self.0 >> 16 }
         
@@ -314,47 +347,85 @@ mod bytecode { /****************************************************************
         fn parse(self) -> T;
     }
     
-    impl ParseFields<Reg> for Instr {
-        fn parse(self) -> Reg { self.reg_arg(0) }
+    impl ParseFields<DestReg> for Instr {
+        fn parse(self) -> DestReg { self.reg_arg(0) }
+    }
+        
+    impl<T> ParseFields<SrcReg<T>> for Instr {
+        fn parse(self) -> SrcReg<T> { From::from(self.src_reg_arg(0)) }
+    }
+        
+    impl ParseFields<AnyAtom> for Instr {
+        fn parse(self) -> AnyAtom { self.atom_arg(0) }
     }
     
-    impl ParseFields<Atom> for Instr {
-        fn parse(self) -> Atom { self.atom_arg(0) }
+    impl<T> ParseFields<Atom<T>> for Instr {
+        fn parse(self) -> Atom<T> { Atom::from(self.atom_arg(0)) }
     }
-    
-    impl ParseFields<(Reg, Atom)> for Instr {
-        fn parse(self) -> (Reg, Atom) {
+        
+    impl ParseFields<(DestReg, AnyAtom)> for Instr {
+        fn parse(self) -> (DestReg, AnyAtom) {
             (self.reg_arg(0), self.atom_arg(1))
         }
     }
-    
-    impl ParseFields<(Reg, ProcIndex)> for Instr {
-        fn parse(self) -> (Reg, ProcIndex) {
-            (self.reg_arg(0), self.proc_arg())
+            
+    impl<T> ParseFields<(SrcReg<T>, AnyAtom)> for Instr {
+        fn parse(self) -> (SrcReg<T>, AnyAtom) {
+            (SrcReg::from(self.src_reg_arg(0)), self.atom_arg(1))
         }
     }
     
-    impl ParseFields<(Reg, Offset)> for Instr {
-        fn parse(self) -> (Reg, Offset) {
-            (self.reg_arg(0), self.offset_arg())
+    impl<T> ParseFields<(DestReg, Atom<T>)> for Instr {
+        fn parse(self) -> (DestReg, Atom<T>) {
+            (self.reg_arg(0), Atom::from(self.atom_arg(1)))
         }
     }
     
-    impl ParseFields<(Reg, Atom, Atom)> for Instr {
-        fn parse(self) -> (Reg, Atom, Atom) {
+    impl<T> ParseFields<(SrcReg<T>, ProcIndex)> for Instr {
+        fn parse(self) -> (SrcReg<T>, ProcIndex) {
+            (From::from(self.src_reg_arg(0)), self.proc_arg())
+        }
+    }
+    
+    impl<T> ParseFields<(SrcReg<T>, Offset)> for Instr {
+        fn parse(self) -> (SrcReg<T>, Offset) {
+            (From::from(self.src_reg_arg(0)), self.offset_arg())
+        }
+    }
+    
+    impl ParseFields<(DestReg, AnyAtom, AnyAtom)> for Instr {
+        fn parse(self) -> (DestReg, AnyAtom, AnyAtom) {
             (self.reg_arg(0), self.atom_arg(1), self.atom_arg(2))
         }
     }
-    
-    impl ParseFields<(Reg, Reg, Atom)> for Instr {
-        fn parse(self) -> (Reg, Reg, Atom) {
-            (self.reg_arg(0), self.reg_arg(1), self.atom_arg(2))
+                
+    impl<T, U> ParseFields<(SrcReg<T>, Atom<U>, AnyAtom)> for Instr {
+        fn parse(self) -> (SrcReg<T>, Atom<U>, AnyAtom) {
+            (SrcReg::from(self.src_reg_arg(0)), From::from(self.atom_arg(1)), self.atom_arg(2))
+        }
+    }
+            
+    impl<T> ParseFields<(DestReg, Atom<T>, AnyAtom)> for Instr {
+        fn parse(self) -> (DestReg, Atom<T>, AnyAtom) {
+            (self.reg_arg(0), From::from(self.atom_arg(1)), self.atom_arg(2))
+        }
+    }
+        
+    impl<T, U> ParseFields<(DestReg, Atom<T>, Atom<U>)> for Instr {
+        fn parse(self) -> (DestReg, Atom<T>, Atom<U>) {
+            (self.reg_arg(0), From::from(self.atom_arg(1)), From::from(self.atom_arg(2)))
         }
     }
     
-    impl ParseFields<(Atom, Offset)> for Instr {
-        fn parse(self) -> (Atom, Offset) {
-            (self.atom_arg(0), self.offset_arg())
+    impl<T, U> ParseFields<(DestReg, SrcReg<T>, Atom<U>)> for Instr {
+        fn parse(self) -> (DestReg, SrcReg<T>, Atom<U>) {
+            (self.reg_arg(0), From::from(self.src_reg_arg(1)), Atom::from(self.atom_arg(2)))
+        }
+    }
+    
+    impl<T> ParseFields<(Atom<T>, Offset)> for Instr {
+        fn parse(self) -> (Atom<T>, Offset) {
+            (Atom::from(self.atom_arg(0)), self.offset_arg())
         }
     }
 }
@@ -366,7 +437,7 @@ mod vm { /**********************************************************************
     use super::{Program, Proc, VMError};
     use value::*;
     use bytecode::*;
-    
+        
     #[derive(Debug)]
     pub struct VM {
         regs: Vec<ValueRef>,
@@ -396,16 +467,24 @@ mod vm { /**********************************************************************
             }
         }
     
-        fn reg(&self, index: Reg) -> &ValueRef { &self.regs[usize::from(index)] }
+        fn reg(&self, index: AnySrcReg) -> &ValueRef { &self.regs[usize::from(index)] }
         
-        fn reg_mut(&mut self, index: Reg) -> &mut ValueRef { &mut self.regs[usize::from(index)] }
+        fn reg_mut(&mut self, index: DestReg) -> &mut ValueRef { &mut self.regs[usize::from(index)] }
+
+        fn reg_t<'a, T>(&'a self, index: SrcReg<T>) -> Result<T, VMError> where T: TryFrom<&'a Value, Error=VMError> {
+            <T as TryFrom<&Value>>::try_from(&**self.reg(AnySrcReg::from(index)))
+        }
     
-        fn atom(&self, atom: Atom) -> &ValueRef {
+        fn atom(&self, atom: AnyAtom) -> &ValueRef {
             match atom.tag() {
                 0 => &self.regs[atom.index()],
                 1 => &self.curr_proc.consts[atom.index()],
                 _ => unreachable!()     
             }
+        }
+
+        fn atom_t<'a, T>(&'a self, atom: Atom<T>) -> Result<T, VMError> where T: TryFrom<&'a Value, Error=VMError> {
+            <T as TryFrom<&Value>>::try_from(&**self.atom(AnyAtom::from(atom)))
         }
     
         fn cob(&self, index: ProcIndex) -> &Gc<Proc> { &self.procs[usize::from(index)] }
@@ -419,261 +498,299 @@ mod vm { /**********************************************************************
                 let instr = self.fetch()?;
                 match instr.op() {
                     MOV => {
-                        let (di, vi): (Reg, Atom) = instr.parse();
-                        let v = self.atom(vi).clone();
+                        let (di, v) = {
+                            let (di, vi): (DestReg, AnyAtom) = instr.parse();
+                            (di, self.atom(vi).clone())
+                        };
                         *self.reg_mut(di) = v;
                     },
                 
                     IEQ => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Bool(a == b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Bool(a == b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     ILT => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Bool(a < b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Bool(a < b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     ILE => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Bool(a <= b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Bool(a <= b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IGT => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Bool(a > b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Bool(a > b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IGE => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Bool(a >= b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Bool(a >= b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
 
                     // FIXME: over/underflow, division by zero
                     INEG => {
-                        let (di, ni): (Reg, Atom) = instr.parse();
-                        let n = isize::try_from(&**self.atom(ni))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(-n));
+                        let (di, v) = {
+                            let (di, ni): (DestReg, Atom<isize>) = instr.parse();
+                            let n = self.atom_t(ni)?;
+                            (di, Gc::new(Value::Int(-n)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IADD => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(a + b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int(a + b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     ISUB => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(a - b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int(a - b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IMUL => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(a * b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int(a * b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IDIV => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(a / b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int(a / b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IREM => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int(a % b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int(a % b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
                     IMOD => {
-                        let (di, ai, bi): (Reg, Atom, Atom) = instr.parse();
-                        let a = isize::try_from(&**self.atom(ai))?;
-                        let b = isize::try_from(&**self.atom(bi))?;
-                        *self.reg_mut(di) = Gc::new(Value::Int((a % b + b) % b));
+                        let (di, v) = {
+                            let (di, ai, bi): (DestReg, Atom<isize>, Atom<isize>) = instr.parse();
+                            let a = self.atom_t(ai)?;
+                            let b = self.atom_t(bi)?;
+                            (di, Gc::new(Value::Int((a % b + b) % b)))
+                        };
+                        *self.reg_mut(di) = v;
                     },
     
                     BOX_NEW => {
-                        let di: Reg = instr.parse();
+                        let di: DestReg = instr.parse();
                         *self.reg_mut(di) = Gc::new(Value::new_box());
                     },
                     BOX_INIT => {
-                        let (bi, vi): (Reg, Atom) = instr.parse();
-                        let b: &VMBox = TryFrom::try_from(&**self.reg(bi))?;
+                        let (bi, vi): (SrcReg<&VMBox>, AnyAtom) = instr.parse();
+                        let b = self.reg_t(bi)?;
                         let v = self.atom(vi);
                         *b.value.borrow_mut() = v.clone();
                     },
                     BOX_GET => {
-                        let (di, bi): (Reg, Atom) = instr.parse();
+                        let (di, bi): (DestReg, Atom<&VMBox>) = instr.parse();
                         let v = {
-                            let b: &VMBox = TryFrom::try_from(&**self.atom(bi))?;
+                            let b = self.atom_t(bi)?;
                             b.value.borrow().clone()
                         };
                         *self.reg_mut(di) = v;
                     },
                     
                     TUPLE_NEW => {
-                        let (di, li): (Reg, Atom) = instr.parse();
-                        let len = usize::try_from(&**self.atom(li))?;
+                        let (di, li): (DestReg, Atom<usize>) = instr.parse();
+                        let len = self.atom_t(li)?;
                         *self.reg_mut(di) = Gc::new(Value::new_tuple(len));
                     },
                     TUPLE_INIT => {
-                        let (ti, ii, vi): (Reg, Atom, Atom) = instr.parse();
-                        let t: &Tuple = TryFrom::try_from(&**self.reg(ti))?;
-                        let i = usize::try_from(&**self.atom(ii))?;
+                        let (ti, ii, vi): (SrcReg<&Tuple>, Atom<usize>, AnyAtom) = instr.parse();
+                        let t = self.reg_t(ti)?;
+                        let i = self.atom_t(ii)?;
                         let v = self.atom(vi);
                         *t.fields.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                     },
                     TUPLE_LEN => {
-                        let (di, ti): (Reg, Atom) = instr.parse();
+                        let (di, ti): (DestReg, Atom<&Tuple>) = instr.parse();
                         let len = {
-                            let t: &Tuple = TryFrom::try_from(&**self.atom(ti))?;
+                            let t = self.atom_t(ti)?;
                             Gc::new(Value::Int(t.fields.borrow().len() as isize))
                         };
                         *self.reg_mut(di) = len;
                     },
                     TUPLE_GET => {
-                        let (di, ti, ii): (Reg, Atom, Atom) = instr.parse();
+                        let (di, ti, ii): (DestReg, Atom<&Tuple>, Atom<usize>) = instr.parse();
                         let v = {
-                            let t: &Tuple = TryFrom::try_from(&**self.atom(ti))?;
-                            let i = usize::try_from(&**self.atom(ii))?;
+                            let t = self.atom_t(ti)?;
+                            let i = self.atom_t(ii)?;
                             t.fields.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                         };
                         *self.reg_mut(di) = v;
                     },
     
                     FN_NEW => {
-                        let (di, li): (Reg, Atom) = instr.parse();
-                        let len = usize::try_from(&**self.atom(li))?;
+                        let (di, li): (DestReg, Atom<usize>) = instr.parse();
+                        let len = self.atom_t(li)?;
                         *self.reg_mut(di) = Gc::new(Value::new_fn(len));
                     },
                     FN_INIT_CODE => {
-                        let (fi, ci): (Reg, ProcIndex) = instr.parse();
-                        let f: &Closure = TryFrom::try_from(&**self.reg(fi))?;
+                        let (fi, ci): (SrcReg<&Closure>, ProcIndex) = instr.parse();
+                        let f = self.reg_t(fi)?;
                         let cob = self.cob(ci).clone();
                         let code = Gc::new(Value::new_code_ptr(cob, 0));
                         *f.code.borrow_mut() = code;
                     },
                     FN_INIT => {
-                        let (fi, ii, vi): (Reg, Atom, Atom) = instr.parse();
-                        let f: &Closure = TryFrom::try_from(&**self.reg(fi))?;
-                        let i = usize::try_from(&**self.atom(ii))?;
+                        let (fi, ii, vi): (SrcReg<&Closure>, Atom<usize>, AnyAtom) = instr.parse();
+                        let f = self.reg_t(fi)?;
+                        let i = self.atom_t(ii)?;
                         let v = self.atom(vi);
                         *f.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                     },
                     FN_CODE => {
-                        let (di, fi): (Reg, Atom) = instr.parse();
+                        let (di, fi): (DestReg, Atom<&Closure>) = instr.parse();
                         let code = {
-                            let f: &Closure = TryFrom::try_from(&**self.atom(fi))?;
+                            let f = self.atom_t(fi)?;
                             f.code.borrow().clone()
                         };
                         *self.reg_mut(di) = code;
                     },
                     FN_GET => {
-                        let (di, fi, ii): (Reg, Reg, Atom) = instr.parse();
+                        let (di, fi, ii): (DestReg, SrcReg<&Closure>, Atom<usize>) = instr.parse();
                         let v = {
-                            let f: &Closure = TryFrom::try_from(&**self.reg(fi))?;
-                            let i = usize::try_from(&**self.atom(ii))?;
+                            let f = self.reg_t(fi)?;
+                            let i = self.atom_t(ii)?;
                             f.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                         };
                         *self.reg_mut(di) = v; 
                     },
                     
                     CONT_NEW => {
-                        let (di, li): (Reg, Atom) = instr.parse();
-                        let len = usize::try_from(&**self.atom(li))?;
+                        let (di, li): (DestReg, Atom<usize>) = instr.parse();
+                        let len = self.atom_t(li)?;
                         *self.reg_mut(di) = Gc::new(Value::new_cont(len));
                     },
                     CONT_INIT_CODE => {
-                        let (ki, offset): (Reg, Offset) = instr.parse();
-                        let k: &Closure = TryFrom::try_from(&**self.reg(ki))?;
+                        let (ki, offset): (SrcReg<&Closure>, Offset) = instr.parse();
+                        let k = self.reg_t(ki)?;
                         let cont_pc = self.offset_pc(offset);
                         let code = Gc::new(Value::new_code_ptr(self.curr_proc.clone(), cont_pc));
                         *k.code.borrow_mut() = code;
                     },
                     CONT_INIT => {
-                        let (ki, ii, vi): (Reg, Atom, Atom) = instr.parse();
-                        let k: &Closure = TryFrom::try_from(&**self.reg(ki))?;
-                        let i = usize::try_from(&**self.atom(ii))?;
+                        let (ki, ii, vi): (SrcReg<&Closure>, Atom<usize>, AnyAtom) = instr.parse();
+                        let k = self.reg_t(ki)?;
+                        let i = self.atom_t(ii)?;
                         let v = self.atom(vi);
                         *k.env.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                     },
                     CONT_CODE => {
-                        let (di, ki): (Reg, Atom) = instr.parse();
+                        let (di, ki): (DestReg, Atom<&Closure>) = instr.parse();
                         let code = {
-                            let k: &Closure = TryFrom::try_from(&**self.atom(ki))?;
+                            let k = self.atom_t(ki)?;
                             k.code.borrow().clone()
                         };
                         *self.reg_mut(di) = code;
                     },
                     CONT_GET => {
-                        let (di, ki, ii): (Reg, Reg, Atom) = instr.parse();
+                        let (di, ki, ii): (DestReg, SrcReg<&Closure>, Atom<usize>) = instr.parse();
                         let v = {
-                            let k: &Closure = TryFrom::try_from(&**self.reg(ki))?;
-                            let i = usize::try_from(&**self.atom(ii))?;
+                            let k = self.reg_t(ki)?;
+                            let i = self.atom_t(ii)?;
                             k.env.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                         };
                         *self.reg_mut(di) = v; 
                     },
                     
                     DENV_NEW => {
-                        let di: Reg = instr.parse();
+                        let di: DestReg = instr.parse();
                         *self.reg_mut(di) = Gc::new(Value::new_denv());     
                     },
                     
                     REC_NEW => {
-                        let (di, li): (Reg, Atom) = instr.parse();
-                        let len = usize::try_from(&**self.atom(li))?;
+                        let (di, li): (DestReg, Atom<usize>) = instr.parse();
+                        let len = self.atom_t(li)?;
                         *self.reg_mut(di) = Gc::new(Value::new_record(len));
                     },
                     REC_INIT_TYPE => {
-                        let (ri, ti): (Reg, Atom) = instr.parse();
-                        let r: &Record = TryFrom::try_from(&**self.reg(ri))?;
+                        let (ri, ti): (SrcReg<&Record>, AnyAtom) = instr.parse();
+                        let r = self.reg_t(ri)?;
                         let t = self.atom(ti).clone();
                         *r.typ.borrow_mut() = t;
                     },
                     REC_INIT => {
-                        let (ri, ii, vi): (Reg, Atom, Atom) = instr.parse();
-                        let r: &Record = TryFrom::try_from(&**self.reg(ri))?;
-                        let i = usize::try_from(&**self.atom(ii))?;
+                        let (ri, ii, vi): (SrcReg<&Record>, Atom<usize>, AnyAtom) = instr.parse();
+                        let r = self.reg_t(ri)?;
+                        let i = self.atom_t(ii)?;
                         let v = self.atom(vi);
                         *r.fields.borrow_mut().get_mut(i).ok_or(VMError::Bounds)? = v.clone();
                     },
                     REC_TYPE => {
-                        let (di, ri): (Reg, Atom) = instr.parse();
+                        let (di, ri): (DestReg, Atom<&Record>) = instr.parse();
                         let t = {
-                            let r: &Record = TryFrom::try_from(&**self.atom(ri))?;
+                            let r = self.atom_t(ri)?;
                             r.typ.borrow().clone()
                         };
                         *self.reg_mut(di) = t;
                     },
                     REC_GET => {
-                        let (di, ri, ii): (Reg, Atom, Atom) = instr.parse();
+                        let (di, ri, ii): (DestReg, Atom<&Record>, Atom<usize>) = instr.parse();
                         let v = {
-                            let r: &Record = TryFrom::try_from(&**self.atom(ri))?;
-                            let i = usize::try_from(&**self.atom(ii))?;
+                            let r = self.atom_t(ri)?;
+                            let i = self.atom_t(ii)?;
                             r.fields.borrow().get(i).ok_or(VMError::Bounds)?.clone()
                         };
                         *self.reg_mut(di) = v;
                     },
                     
                     BRF => {
-                        let (ci, offset): (Atom, Offset) = instr.parse();
-                        let cond = bool::try_from(&**self.atom(ci))?;
+                        let (ci, offset): (Atom<bool>, Offset) = instr.parse();
+                        let cond = self.atom_t(ci)?;
                         if !cond {
                             self.pc = self.offset_pc(offset);
                         }
                     }
     
                     IJMP => {
-                        let ci: Reg = instr.parse();
+                        let ci: SrcReg<&CodePtr> = instr.parse();
                         let (cob, pc) = {
-                            let code: &CodePtr = TryFrom::try_from(&**self.reg(ci))?;
+                            let code = self.reg_t(ci)?;
                             (code.cob.clone(), code.pc)
                         };
                         self.curr_proc = cob;
@@ -681,7 +798,7 @@ mod vm { /**********************************************************************
                     },
     
                     HALT => {
-                        let i: Atom = instr.parse();
+                        let i: AnyAtom = instr.parse();
                         return Ok(self.atom(i).clone());
                     },
                     
