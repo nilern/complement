@@ -3,7 +3,8 @@
 (provide eval-CPS)
 (require racket/match racket/hash racket/undefined (only-in srfi/26 cute)
          nanopass/base
-         "util.rkt" "langs.rkt" (prefix-in primops: "primops.rkt"))
+         "../util.rkt" "../langs.rkt" (prefix-in primops: "../primops.rkt")
+         (prefix-in kenv: (submod "../util.rkt" cont-env)))
 
 ;;;; Values
 
@@ -17,7 +18,7 @@
 
 (module env racket/base
   (provide empty push-args insert ref)
-  (require "util.rkt")
+  (require "../util.rkt")
 
   (define (empty) (hash))
 
@@ -38,8 +39,7 @@
 ;;;; Eval
 
 (require (prefix-in value: (submod "." value))
-         (prefix-in env: (submod "." env))
-         (prefix-in kenv: (submod "util.rkt" cont-env)))
+         (prefix-in env: (submod "." env)))
 
 ;; TODO: dominator scoping rule
 (define-pass eval-CPS : CPS (ir) -> * ()

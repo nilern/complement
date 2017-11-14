@@ -3,7 +3,8 @@
 (provide select-instructions shrink)
 (require racket/match racket/list racket/set data/gvector (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt" (prefix-in cfg: "cfg.rkt") (prefix-in kenv: (submod "util.rkt" cont-env)))
+         "../langs.rkt" (prefix-in cfg: "../cfg.rkt")
+         (prefix-in kenv: (submod "../util.rkt" cont-env)))
 
 ;; TODO: DynEnv creation
 (define-pass select-instructions : CPCPS (ir) -> RegisterizableCPCPS ()
@@ -73,7 +74,7 @@
 (module label-table racket/base
   (provide make)
   (require (only-in srfi/26 cute) nanopass/base
-           "langs.rkt")
+           "../langs.rkt")
 
   ;;; FIXME: callers and callees should disallow duplicates
 

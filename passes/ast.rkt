@@ -3,7 +3,7 @@
 (provide cps-convert)
 (require racket/match data/gvector (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt")
+         "../langs.rkt")
 
 ;; TODO: __raise doesn't return so turning it into a Transfer (just like we did
 ;;       with __halt) should compress the output of this somewhat

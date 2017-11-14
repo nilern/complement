@@ -5,10 +5,10 @@
            racket/pretty
            nanopass/base
            "langs.rkt"
-           "parse.rkt" "cst-passes.rkt" "ast-passes.rkt" "cps-passes.rkt"
-           (prefix-in cpcps: "cpcps-passes.rkt") "register-allocation.rkt" "codegen.rkt"
-           (only-in "bytecode.rkt" serialize-chunk)
-           "eval.rkt" "eval-cps.rkt" "eval-cpcps.rkt")
+           "passes/parse.rkt" "passes/cst.rkt" "passes/ast.rkt" "passes/cps.rkt"
+           (prefix-in cpcps: "passes/cpcps.rkt") "passes/register-allocation.rkt"
+           "passes/codegen.rkt" (only-in "passes/bytecode.rkt" serialize-chunk)
+           "eval/cst.rkt" "eval/cps.rkt" "eval/cpcps.rkt")
 
   (define output (current-output-port))
   (define cps-ltab (make-hash))

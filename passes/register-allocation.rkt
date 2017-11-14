@@ -3,10 +3,10 @@
 (provide allocate-registers)
 (require racket/match racket/list racket/set (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt"
-         (prefix-in ltab: (submod "cpcps-passes.rkt" label-table))
-         (prefix-in kenv: (submod "util.rkt" cont-env))
-         (prefix-in cfg: "cfg.rkt") (only-in "util.rkt" unzip-hash))
+         "../langs.rkt"
+         (prefix-in ltab: (submod "cpcps.rkt" label-table))
+         (prefix-in kenv: (submod "../util.rkt" cont-env))
+         (prefix-in cfg: "../cfg.rkt") (only-in "../util.rkt" unzip-hash))
 
 (define-pass cfg-liveness : RegisterizableCPCPS (ir) -> * ()
   (definitions

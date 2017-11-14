@@ -4,7 +4,7 @@
 
 (require racket/undefined racket/match (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt" (prefix-in primops: "primops.rkt"))
+         "../langs.rkt" (prefix-in primops: "../primops.rkt"))
 
 ;;;; Value
 

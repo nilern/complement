@@ -3,8 +3,9 @@
 (provide census relax-edges analyze-closures closure-convert)
 (require racket/match racket/set data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
-         "langs.rkt" (prefix-in cfg: "cfg.rkt") (only-in "util.rkt" clj-group-by unzip-hash)
-         (prefix-in kenv: (submod "util.rkt" cont-env)))
+         "../langs.rkt" (prefix-in cfg: "../cfg.rkt")
+         (only-in "../util.rkt" clj-group-by unzip-hash)
+         (prefix-in kenv: (submod "../util.rkt" cont-env)))
 
 ;; TODO: use this in shrinking
 (define-pass census : CPS (ir ltab vtab delta) -> * ()

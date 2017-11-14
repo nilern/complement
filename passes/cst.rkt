@@ -4,7 +4,7 @@
 (require racket/match racket/list racket/hash (only-in srfi/26 cute) (only-in threading ~>>)
          (only-in racket/function identity)
          nanopass/base
-         "langs.rkt" (only-in "util.rkt" clj-group-by))
+         "../langs.rkt" (only-in "../util.rkt" clj-group-by))
 
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions

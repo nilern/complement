@@ -5,12 +5,12 @@
          (only-in racket/list remove-duplicates) racket/set racket/dict data/gvector
          (only-in threading ~>)
          nanopass/base
-         (rename-in "langs.rkt" (InstrCPCPS-Atom=? atom=?)
-                                (InstrCPCPS-Atom-hash hash-atom))
-         (prefix-in ops: "primops.rkt") (prefix-in bytecode: "bytecode.rkt")
+         (rename-in "../langs.rkt" (InstrCPCPS-Atom=? atom=?)
+                                   (InstrCPCPS-Atom-hash hash-atom))
+         (prefix-in ops: "../primops.rkt") (prefix-in bytecode: "bytecode.rkt")
          (prefix-in reg-pool: (submod "register-allocation.rkt" reg-pool))
-         (prefix-in cfg: "cfg.rkt")
-         (only-in "util.rkt" zip-hash unzip-hash when-let-values while-let-values))
+         (prefix-in cfg: "../cfg.rkt")
+         (only-in "../util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
 ;;; TODO: pull out names into debug info tables
                     

@@ -6,7 +6,7 @@
          parser-tools/yacc
          nanopass/base
 
-         "langs.rkt")
+         "../langs.rkt")
 
 (provide parse)
 

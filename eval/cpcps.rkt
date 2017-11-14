@@ -3,9 +3,9 @@
 (provide eval-CPCPS)
 (require racket/match racket/undefined (only-in racket/hash hash-union) (only-in srfi/26 cute)
          nanopass/base
-         "langs.rkt" (prefix-in primops: "primops.rkt")
-         (prefix-in env: (submod "eval-cps.rkt" env))
-         (prefix-in kenv: (submod "util.rkt" cont-env)))
+         "../langs.rkt" (prefix-in primops: "../primops.rkt")
+         (prefix-in env: (submod "cps.rkt" env))
+         (prefix-in kenv: (submod "../util.rkt" cont-env)))
 
 ;;;; Values
 

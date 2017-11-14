@@ -5,7 +5,7 @@
          data/gvector
          (only-in srfi/26 cute) (only-in threading ~>)
          nanopass/base
-         (only-in "langs.rkt" ResolvedAsm))
+         (only-in "../langs.rkt" ResolvedAsm))
 
 ;; FIXME: assert that indices fit into instr fields
          
