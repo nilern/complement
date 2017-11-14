@@ -54,6 +54,9 @@
     [,e (Expr e #f stmt-acc)])
 
   (Expr : Expr (ir name stmt-acc) -> Expr ()
+    [(primcall ,p ,[a*] ...) (guard (eq? p '__ffnNew)) ; HACK
+     (gvector-add! stmt-acc (emit-stmt name `(primcall1 __ffnNew ,(car a*))))
+     (gvector-add! stmt-acc `(primcall3 __ffnInitType (lex ,name) ,(cadr a*) ,(caddr a*)))]
     [(primcall ,p ,[a*] ...) (guard (varargs-primop? p))
      (gvector-add! stmt-acc (emit-compound-start name p (length a*)))
      (for ([(atom i) (in-indexed a*)])

@@ -4,6 +4,8 @@
 extern crate gc_derive;
 extern crate gc;
 extern crate clap;
+extern crate libloading;
+extern crate libffi;
 
 mod data;
 mod code;

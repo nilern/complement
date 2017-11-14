@@ -6,4 +6,6 @@ authors = ["Pauli Jaakkola <pauli.jaakkola@iki.fi>"]
 [dependencies]
 gc = "*"
 gc_derive = "*"
+libloading = "*"
+libffi = "*"
 clap = "2"

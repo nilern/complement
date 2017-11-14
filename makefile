@@ -21,5 +21,5 @@ clean-vm:
 complotc: $(shell find -name "*.rkt")
 	raco exe -o complotc main.rkt
 
-vm/target/release/vm: vm/src/main.rs
+vm/target/release/vm: $(shell find vm/src -name "*.rs")
 	cd vm && cargo build --release && cd ..

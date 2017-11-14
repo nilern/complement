@@ -39,7 +39,8 @@
     (__recNew __recInitType __recInit __recType __recGet)
     (__br __brf)
     (__jmp __ijmp)
-    (__halt __raise)))
+    (__halt __raise)
+    (__flibOpen __flibSym __ffnNew __ffnInitType)))
 
 (define op-encodings
   (for*/hash ([(op-group i) (in-indexed ops)]
@@ -47,6 +48,11 @@
     (values op (bit-or (ash i 4) j))))
 
 (define encode-op (cute hash-ref op-encodings <>))
+
+(define (unwrap-reg atom)
+  (nanopass-case (ResolvedAsm Atom) atom
+    [(reg ,i) i]
+    [else (error "not a reg" atom)]))
 
 (define (encode-arg-atom arg-atom)
   (nanopass-case (ResolvedAsm Atom) arg-atom
@@ -72,17 +78,35 @@
     (match* (op args)
       [((or '__boxNew '__denvNew) '())
        (encode-astmt op dest-reg (encode-arg-atoms args))]
+      [((or '__ffnNew) (list a))
+       (~> (unwrap-reg a)
+           (ash arg-atom-shift)
+           (bit-or dest-reg)
+           (ash arg-atom-shift)
+           (bit-or (encode-op op)))]
       [((or '__mov
             '__iNeg
             '__boxGet '__tupleNew '__tupleLength '__fnNew '__fnCode '__contNew '__contCode
             '__recNew '__recType
-            '__raise)
+            '__raise
+            '__flibOpen)
         (list _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__iEq '__iLt '__iLe '__iGt '__iGe
             '__iAdd '__iSub '__iMul '__iDiv '__iRem '__iMod
             '__tupleGet '__fnGet '__contGet '__recGet) (list _ _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
+      [((or '__flibSym) (list a b))
+       (define src-reg
+         (nanopass-case (ResolvedAsm Atom) a
+           [(reg ,i) i]
+           [else (error "not a reg" a)]))
+       (~> (ash (encode-arg-atom b) arg-atom-shift)
+           (bit-or src-reg)
+           (ash arg-atom-shift)
+           (bit-or dest-reg)
+           (ash arg-atom-shift)
+           (bit-or (encode-op op)))]
       [(_ _) (error "unimplemented encoding" op)])
     (match* (op args)
       [((or '__fnInitCode) (list dest proc))
@@ -108,6 +132,14 @@
            [else (error "not a label" label)]))
        (~> (ash label-offset 16)
            (bit-or (ash dest-reg op-width))
+           (bit-or (encode-op op)))]
+      [((or '__ffnInitType) (list a b c))
+       (~> (encode-arg-atom c)
+           (ash arg-atom-shift)
+           (bit-or (unwrap-reg b))
+           (ash arg-atom-shift)
+           (bit-or (unwrap-reg a))
+           (ash arg-atom-shift)
            (bit-or (encode-op op)))]
       [((or '__boxSet
             '__tupleInit '__fnInit '__contInit '__recInitType '__recInit)

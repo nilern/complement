@@ -60,6 +60,13 @@ pub const IJMP: u8 = 0xA1;
 
 pub const HALT: u8 = 0xB0;
 
+pub const FLIB_OPEN      : u8 = 0xC0;
+pub const FLIB_SYM       : u8 = 0xC1;
+pub const FFN_NEW        : u8 = 0xC2;
+pub const FFN_INIT_TYPE  : u8 = 0xC3;
+pub const FFN_INIT_CCONV : u8 = 0xC4;
+pub const FFN_CALL       : u8 = 0xC5;
+
 #[derive(Debug, Clone, Copy)]
 pub struct AnySrcReg(u8);
 
@@ -181,11 +188,24 @@ impl<T> ParseFields<(SrcReg<T>, AnyAtom)> for Instr {
     }
 }
 
+impl<T> ParseFields<(DestReg, SrcReg<T>)> for Instr {
+    fn parse(self) -> (DestReg, SrcReg<T>) {
+        (self.reg_arg(0), SrcReg::from(self.src_reg_arg(1)))
+    }
+}
+
 impl<T> ParseFields<(DestReg, Atom<T>)> for Instr {
     fn parse(self) -> (DestReg, Atom<T>) {
         (self.reg_arg(0), Atom::from(self.atom_arg(1)))
     }
 }
+
+impl<T, U> ParseFields<(SrcReg<T>, Atom<U>)> for Instr {
+    fn parse(self) -> (SrcReg<T>, Atom<U>) {
+        (From::from(self.src_reg_arg(0)), Atom::from(self.atom_arg(1)))
+    }
+}
+
 
 impl<T> ParseFields<(SrcReg<T>, ProcIndex)> for Instr {
     fn parse(self) -> (SrcReg<T>, ProcIndex) {
@@ -205,6 +225,18 @@ impl ParseFields<(DestReg, AnyAtom, AnyAtom)> for Instr {
     }
 }
             
+impl<T, U> ParseFields<(SrcReg<T>, SrcReg<U>, AnyAtom)> for Instr {
+    fn parse(self) -> (SrcReg<T>, SrcReg<U>, AnyAtom) {
+        (SrcReg::from(self.src_reg_arg(0)), From::from(self.src_reg_arg(1)), self.atom_arg(2))
+    }
+}
+            
+impl<T, U, V> ParseFields<(SrcReg<T>, SrcReg<U>, Atom<V>)> for Instr {
+    fn parse(self) -> (SrcReg<T>, SrcReg<U>, Atom<V>) {
+        (SrcReg::from(self.src_reg_arg(0)), From::from(self.src_reg_arg(1)), From::from(self.atom_arg(2)))
+    }
+}
+            
 impl<T, U> ParseFields<(SrcReg<T>, Atom<U>, AnyAtom)> for Instr {
     fn parse(self) -> (SrcReg<T>, Atom<U>, AnyAtom) {
         (SrcReg::from(self.src_reg_arg(0)), From::from(self.atom_arg(1)), self.atom_arg(2))
@@ -220,6 +252,12 @@ impl<T> ParseFields<(DestReg, Atom<T>, AnyAtom)> for Instr {
 impl<T, U> ParseFields<(DestReg, Atom<T>, Atom<U>)> for Instr {
     fn parse(self) -> (DestReg, Atom<T>, Atom<U>) {
         (self.reg_arg(0), From::from(self.atom_arg(1)), From::from(self.atom_arg(2)))
+    }
+}
+
+impl<T> ParseFields<(DestReg, AnySrcReg, Atom<T>)> for Instr {
+    fn parse(self) -> (DestReg, AnySrcReg, Atom<T>) {
+        (self.reg_arg(0), self.src_reg_arg(1), Atom::from(self.atom_arg(2)))
     }
 }
 

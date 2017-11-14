@@ -1,6 +1,13 @@
+use std::io;
 use std::convert::TryFrom;
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::mem;
 use gc::{Gc, GcCell};
+use libloading::Library;
+use libffi::high;
+use libffi::middle::{Cif, Type, Arg};
+use libffi::low::ffi_type;
 
 use code::Instr;
     
@@ -8,8 +15,10 @@ use code::Instr;
 pub enum VMError {
     OutOfInstrs,
     Uninitialized,
+    Reinitialization,
     Type,
-    Bounds
+    Bounds,
+    ForeignLoad(io::Error)
 }
     
 #[derive(Debug, Trace, Finalize)]
@@ -48,6 +57,19 @@ pub struct Closure {
 }
 
 #[derive(Debug, Trace, Finalize)]
+pub struct ForeignPtr {
+    #[unsafe_ignore_trace]
+    pub ptr: *mut (),
+    lib: ValueRef
+}
+
+#[derive(Debug)]
+pub struct ForeignFn {
+    pub fn_ptr: high::CodePtr,
+    pub cif: RefCell<Option<Cif>>
+}
+
+#[derive(Debug, Trace, Finalize)]
 pub struct Record {
     pub typ: GcCell<Gc<Value>>,
     pub fields: GcCell<Vec<ValueRef>>
@@ -72,6 +94,10 @@ pub enum Value {
     Cont(Closure),
     
     Denv(HashMap<String, ValueRef>),
+
+    ForeignLib(#[unsafe_ignore_trace] Library),
+    ForeignPtr(ForeignPtr),
+    ForeignFn(#[unsafe_ignore_trace] ForeignFn),
 
     Record(Record)
 }
@@ -110,6 +136,24 @@ impl Value {
         Value::Denv(HashMap::new())     
     }
 
+    pub fn new_foreign_lib(path: &str) -> Result<Value, VMError> {
+        match Library::new(path) {
+            Ok(lib) => Ok(Value::ForeignLib(lib)),
+            Err(err) => Err(VMError::ForeignLoad(err))
+        }
+    }
+
+    pub fn new_ptr(lib: ValueRef, ptr: *mut ()) -> Value {
+        Value::ForeignPtr(ForeignPtr { ptr: ptr, lib: lib })
+    }
+    
+    pub fn new_ffn(ptr: *mut ()) -> Value {
+        Value::ForeignFn(ForeignFn {
+            fn_ptr: high::CodePtr(ptr as _),
+            cif: RefCell::new(None)
+        })
+    }
+
     pub fn new_record(len: usize) -> Value {
         Value::Record(Record {
             typ: GcCell::new(Gc::new(Value::Null)),
@@ -139,6 +183,14 @@ impl<'a> TryFrom<&'a Value> for bool {
 
     fn try_from(v: &Value) -> Result<bool, VMError> {
         if let &Value::Bool(b) = v { Ok(b) } else { Err(VMError::Type) }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for &'a str {
+    type Error = VMError;
+
+    fn try_from(v: &Value) -> Result<&str, VMError> {
+        if let &Value::String(ref s) = v { Ok(s) } else { Err(VMError::Type) }
     }
 }
 
@@ -173,11 +225,68 @@ impl<'a> TryFrom<&'a Value> for &'a Closure {
         if let &Value::Cont(ref k) = v { Ok(k) } else { Err(VMError::Type) }
     }
 }
+
+impl<'a> TryFrom<&'a Value> for &'a Library {
+    type Error = VMError;
+
+    fn try_from(v: &Value) -> Result<&Library, VMError> {
+        if let &Value::ForeignLib(ref lib) = v { Ok(lib) } else { Err(VMError::Type) }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for &'a ForeignPtr {
+    type Error = VMError;
+
+    fn try_from(v: &Value) -> Result<&ForeignPtr, VMError> {
+        if let &Value::ForeignPtr(ref ptr) = v { Ok(ptr) } else { Err(VMError::Type) }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for &'a ForeignFn {
+    type Error = VMError;
+
+    fn try_from(v: &Value) -> Result<&ForeignFn, VMError> {
+        if let &Value::ForeignFn(ref f) = v { Ok(f) } else { Err(VMError::Type) }
+    }
+}
     
 impl<'a> TryFrom<&'a Value> for &'a Record {
     type Error = VMError;
 
     fn try_from(v: &Value) -> Result<&Record, VMError> {
         if let &Value::Record(ref r) = v { Ok(r) } else { Err(VMError::Type) }
+    }
+}
+
+pub fn as_ffi_type(value: &ValueRef) -> Result<Type, VMError> {
+    match &**value {
+        &Value::Int(0) => Ok(Type::isize()),
+        &Value::Int(2) => Ok(Type::u32()),
+        _ => Err(VMError::Type)
+    }
+}
+
+pub fn as_arg(typ: *mut ffi_type, value: &ValueRef) -> Result<Arg, VMError> {
+    if typ == Type::isize().as_raw_ptr() {
+        if let &Value::Int(ref i) = &**value {
+            Ok(Arg::new(i))
+        } else if let &Value::Char(ref c) = &**value {
+            Ok(Arg::new(c))
+        } else {
+            unimplemented!()
+        }
+    } else {
+        unimplemented!()
+    }
+}
+
+#[cfg(target_pointer_width="64")]
+pub fn inject(typ: *mut ffi_type, value: u64) -> Result<Value, VMError> {
+    if typ == Type::isize().as_raw_ptr() {
+        Ok(Value::Int(value as _))
+    } else if typ == Type::u32().as_raw_ptr() {
+        Ok(Value::Char(unsafe { mem::transmute(value as u32) }))
+    } else {
+        unimplemented!()
     }
 }

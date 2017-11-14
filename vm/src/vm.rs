@@ -1,8 +1,18 @@
 use std::convert::TryFrom;
+use std::slice;
 use gc::Gc;
+use libloading::Library;
+use libffi::middle::{Cif, Type, Arg, FfiAbi};
 
 use code::*;
-use data::{VMError, Program, VMBox, Tuple, Record, Proc, Closure, CodePtr, Value, ValueRef};
+use data::{VMError, Program, VMBox, Tuple, Record, Proc, ForeignFn, Closure, CodePtr, ForeignPtr,
+           Value, ValueRef, as_ffi_type, as_arg, inject};
+
+// FIXME: Not safe-for-space since ValueRef:s are just left in registers until the register is
+//        reused. It is probably prudent to address that when we replace rust-gc and implement
+//        safepoints. With rust-gc we would need the compiler to encode liveness information and
+//        then have the VM read that all the time so that it can clear registers as they die, which
+//        would be compilcated and slow.
 
 #[derive(Debug)]
 pub struct VM {
@@ -366,6 +376,97 @@ impl VM {
                 HALT => {
                     let i: AnyAtom = instr.parse();
                     return Ok(self.atom(i).clone());
+                },
+
+                FLIB_OPEN => {
+                    let (di, lib) = {
+                        let (di, ni): (DestReg, Atom<&str>) = instr.parse();
+                        let name = self.atom_t(ni)?;
+                        (di, Gc::new(Value::new_foreign_lib(name)?))   
+                    };
+                    *self.reg_mut(di) = lib;
+                },
+                FLIB_SYM => {
+                    let (di, ptr) = {
+                        let (di, li, ni): (DestReg, AnySrcReg, Atom<&str>) = instr.parse();
+                        let lib = self.reg(li);
+                        let tlib: &Library = TryFrom::try_from(&**lib)?;
+                        let name = self.atom_t(ni)?;
+                        let ptr = unsafe { tlib.get(name.as_bytes()) }.map_err(VMError::ForeignLoad)?;
+                        (di, Gc::new(Value::new_ptr(lib.clone(), *ptr)))
+                    };
+                    *self.reg_mut(di) = ptr;
+                },
+                FFN_NEW => { // FIXME: Need to copy lib pointer from ptr to f to prevent dangling:
+                    let (di, f) = {
+                        let (di, pi): (DestReg, SrcReg<&ForeignPtr>) = instr.parse();
+                        let ptr = self.reg_t(pi)?;
+                        (di, Gc::new(Value::new_ffn(ptr.ptr)))
+                    };
+                    *self.reg_mut(di) = f;
+                },
+                FFN_INIT_TYPE => {
+                    let (fi, ai, ri): (SrcReg<&ForeignFn>, SrcReg<&Tuple>, AnyAtom) = instr.parse();
+                    let f = self.reg_t(fi)?;
+                    let arg_types = self.reg_t(ai)?;
+                    let ret_type = self.atom(ri);
+                    if f.cif.borrow().is_none() {
+                        let arg_types_t: Vec<Type> = arg_types.fields.borrow().iter()
+                                                              .map(as_ffi_type)
+                                                              .collect::<Result<_, _>>()?;
+                        *f.cif.borrow_mut() = Some(Cif::new(arg_types_t.into_iter(),
+                                                            as_ffi_type(ret_type)?));
+                    } else {
+                        return Err(VMError::Reinitialization);
+                    }
+                },
+                FFN_INIT_CCONV => { // TODO: Integrate into FFN_NEW
+                    let (fi, cci): (SrcReg<&ForeignFn>, Atom<&str>) = instr.parse();
+                    let f = self.reg_t(fi)?;
+                    let cconv = self.atom_t(cci)?;
+                    match cconv {
+                        "system" => { /* ffi_abi_FFI_DEFAULT_ABI, don't need to do anything */ },
+                        "sysv64" => match *f.cif.borrow_mut() {
+                            Some(ref mut cif) => cif.set_abi(FfiAbi::FFI_UNIX64),
+                            None => return Err(VMError::Uninitialized)
+                        },
+                        _ => unimplemented!()
+                    }
+                },
+                FFN_CALL => {
+                    let (kcode, res) = {
+                        let fi: SrcReg<&ForeignFn> = instr.parse();
+                        let k: &Closure = TryFrom::try_from(&*self.regs[1])?;
+                        let args: &Tuple = TryFrom::try_from(&*self.regs[3])?;
+                        let f = self.reg_t(fi)?;
+                        if let Some(ref cif) = *f.cif.borrow() {
+                            let raw_cif = cif.as_raw_ptr();
+                            let arg_types = unsafe {
+                                slice::from_raw_parts((*raw_cif).arg_types, (*raw_cif).nargs as _)
+                            };
+                            let args: Vec<Arg> = arg_types.iter().zip(args.fields.borrow().iter())
+                                                                 .map(|(&t, v)| as_arg(t, v))
+                                                                 .collect::<Result<_, _>>()?;
+                            let res_type = unsafe { *raw_cif }.rtype;
+                            let res: u64 = match unsafe { (*res_type).size } {
+                                1 => unimplemented!(),
+                                2 => unimplemented!(),
+                                4 => unimplemented!(),
+                                8 => unsafe { cif.call(f.fn_ptr, args.as_slice()) },
+                                _ => unimplemented!()
+                            };
+                            (k.code.borrow().clone(), Gc::new(inject(res_type, res)?))
+                        } else {
+                            return Err(VMError::Uninitialized);
+                        }
+                    };
+                    // OPTIMIZE: tweak continuation calling convention to make
+                    //           the 1->0 move unnecessary?:
+                    self.regs[0] = self.regs[1].clone();
+                    self.regs[1] = res;
+                    let kcode_t: &CodePtr = TryFrom::try_from(&*kcode)?;
+                    self.curr_proc = kcode_t.cob.clone();
+                    self.pc = kcode_t.pc;
                 },
                 
                 op => panic!("unimplemented op {:?}", op)
