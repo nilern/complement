@@ -1,17 +1,25 @@
 #lang racket/base
 
 (provide allocate-registers)
-(require racket/match racket/list racket/set (only-in srfi/26 cute)
+(require racket/match
+         (only-in racket/stream stream-first)
+         racket/set
+         racket/dict
+         data/gvector
+         (only-in srfi/26 cute)
+         (only-in threading ~>)
          nanopass/base
-         "../langs.rkt"
+
+         (rename-in "../langs.rkt" (InstrCPCPS-Atom=? atom=?) (InstrCPCPS-Atom-hash hash-atom))
          (prefix-in ltab: (submod "cpcps.rkt" label-table))
          (prefix-in kenv: (submod "../util.rkt" cont-env))
-         (prefix-in cfg: "../cfg.rkt") (only-in "../util.rkt" unzip-hash))
+         (prefix-in cfg: "../cfg.rkt")
+         (only-in "../util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
 (define-pass cfg-liveness : RegisterizableCPCPS (ir) -> * ()
   (definitions
     (struct $luses-builder (stmt-luses transfer-luses))
-  
+
     (define (make-luses-builder transfer-luses)
       ($luses-builder '() transfer-luses))
 
@@ -31,7 +39,7 @@
     (define (build-luses luses-builder)
       (match-define ($luses-builder stmt-luses transfer-luses) luses-builder)
       (values stmt-luses transfer-luses))
-  
+
     (define (freevars+luses prev-freevars local-freevars)
       (values (set-union local-freevars prev-freevars)
               (set-subtract local-freevars prev-freevars)))
@@ -156,8 +164,9 @@
 
 (require (prefix-in reg-pool: (submod "." reg-pool)))
 
+;; TODO: Return multiple values instead of mutating `liveness` and `dom-forests`.
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
-(define-pass allocate-registers : RegisterizableCPCPS (ir global-liveness global-dom-forests) -> RegCPCPS ()
+(define-pass allocate : RegisterizableCPCPS (ir livenesses dom-forests) -> RegCPCPS ()
   (Program : Program (ir) -> Program ()
     [(prog ([,n* ,blocks*] ...) ,n)
      `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
@@ -166,9 +175,9 @@
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (ltab:make n1* k* n2*))
      (define dom-forest (cfg:dominator-forest ltab (cfg:reverse-postorder ltab n2*) n2*))
-     (hash-set! global-dom-forests name dom-forest) ; HACK
+     (hash-set! dom-forests name dom-forest)
      (define liveness (cfg-liveness ir))
-     (hash-set! global-liveness name liveness) ; HACK
+     (hash-set! livenesses name liveness)
      (define env (make-hash))
      (define kenv (kenv:inject n1* k*))
      (define cont-acc (make-hash))
@@ -235,3 +244,188 @@
     [(lex ,n) `(reg ,(hash-ref env n))]
     [(label ,n) `(label ,n)]
     [(proc ,n) `(proc ,n)]))
+
+(define (dict-take! kvs k)
+  (begin0
+    (dict-ref kvs k)
+    (dict-remove! kvs k)))
+
+(define-custom-hash-types atom-hash
+  atom=?
+  hash-atom)
+
+(define-pass schedule-moves : RegCPCPS (ir livenesses dom-forests) -> InstrCPCPS ()
+  (definitions
+    (define (atom-in-reg? atom reg)
+      (nanopass-case (InstrCPCPS Atom) atom
+        [(reg ,i) (guard (= i reg)) #t]
+        [else #f]))
+
+    (define (deallocate-atom! reg-pool atom)
+      (nanopass-case (InstrCPCPS Atom) atom
+        [(reg ,i) (reg-pool:deallocate! reg-pool i)]
+        [else (void)]))
+
+    (define make-move-graph
+      (let* ([unknown-arg-moves!
+              (lambda (move-graph args)
+                (for ([(arg reg) (in-indexed args)]
+                      #:when (not (atom-in-reg? arg reg)))
+                  (add-move! move-graph arg reg)))])
+        (lambda (kenv callee args)
+          (with-output-language (InstrCPCPS Var)
+            (define move-graph (make-mutable-atom-hash))
+            (define callee*
+              (nanopass-case (InstrCPCPS Var) callee
+                [(reg ,i)
+                 (unknown-arg-moves! move-graph args)
+                 (define fallback-reg (length args))
+                 (if (< i fallback-reg)
+                   (begin
+                     (add-move! move-graph callee fallback-reg)
+                     `(reg ,fallback-reg))
+                   callee)]
+                [(label ,n)
+                 (nanopass-case (RegCPCPS Cont) (hash-ref kenv n)
+                   [(cont ([,n* ,i*] ...) ,s* ... ,t)
+                    (for ([arg args] [reg i*]
+                          #:when (not (atom-in-reg? arg reg)))
+                      (add-move! move-graph arg reg))])
+                 callee]
+                [(proc ,n)
+                 (unknown-arg-moves! move-graph args)
+                 callee]))
+            (values callee* move-graph)))))
+
+    (define (add-move! move-graph arg reg)
+      (~> (dict-ref! move-graph arg mutable-set)
+          (set-add! reg)))
+
+    (define (change-src! move-graph src new-src)
+      (define dests (dict-take! move-graph src))
+      (set-remove! dests (unwrap-reg new-src))
+      (unless (set-empty? dests)
+        (dict-set! move-graph new-src dests)))
+
+    (define (take-move! move-graph reg-pool src dest-var)
+      (change-src! move-graph src dest-var)
+      (deallocate-atom! reg-pool src))
+
+    (define (take-leaf-move! move-graph reg-pool stmt-acc)
+      (with-output-language (InstrCPCPS Var)
+        (let/ec return
+          (define-values (src dest dest-var)
+            (let/ec finish
+              (for* ([(src dests) (in-dict move-graph)]
+                     [dest dests])
+                (define dest-var `(reg ,dest))
+                (unless (dict-has-key? move-graph dest-var)
+                  (finish src dest dest-var)))
+              (return #f #f #f)))
+          (take-move! move-graph reg-pool src dest-var)
+          (values #t dest src))))
+
+    (define (break-cycle! move-graph reg-pool stmt-acc)
+      (with-output-language (InstrCPCPS Var)
+        (if (not (dict-empty? move-graph))
+          (let-values ([(src dests) (stream-first (sequence->stream (in-dict move-graph)))])
+            (define dest (reg-pool:allocate! reg-pool))
+            (take-move! move-graph reg-pool src `(reg ,dest))
+            (values #t dest src))
+          (values #f #f #f))))
+
+    (define (unwrap-reg atom)
+      (nanopass-case (InstrCPCPS Atom) atom
+        [(reg ,i) i]
+        [else (error "not a register" atom)]))
+
+    (define (emit-stmt! stmt-acc name reg expr)
+      (with-output-language (InstrCPCPS Stmt)
+        (gvector-add! stmt-acc (if name `(def (,name ,reg) ,expr) expr))))
+
+    (define (emit-move! stmt-acc dest src)
+      (emit-stmt! stmt-acc (gensym 'arg) dest src)))
+
+  (Program : Program (ir) -> Program ()
+      [(prog ([,n* ,blocks*] ...) ,n)
+       (define max-regs (box 0))
+       (define f* (map (cute CFG <> <> max-regs) blocks* n*))
+       `(prog ([,n* ,f*] ...) ,(unbox max-regs) ,n)])
+
+  (CFG : CFG (ir name max-regs) -> CFG ()
+    [(cfg ([,n1* ,k*] ...) (,n2* ...))
+     (define liveness (hash-ref livenesses name))
+     (define dom-forest (hash-ref dom-forests name))
+     (define kenv (zip-hash n1* k*))
+     (define env (make-hash))
+     (define cont-acc (make-hash))
+     (for ([entry n2*])
+       (let loop ([dom-tree (hash-ref dom-forest entry)])
+         (match-define (cons label children) dom-tree)
+         (Cont (hash-ref kenv label) label kenv env (hash-ref liveness label) cont-acc max-regs)
+         (for ([child children])
+           (loop child))))
+     (define-values (labels conts) (unzip-hash cont-acc))
+     `(cfg ([,labels ,conts] ...) (,n2* ...))])
+
+  (Cont : Cont (ir label kenv env liveness cont-acc max-regs) -> Cont ()
+    [(cont ([,n* ,i*] ...) ,s* ... ,t)
+     (define reg-pool (reg-pool:make))
+     (define stmt-acc (make-gvector))
+     (for ([freevar (hash-ref liveness 'freevars)])
+       (reg-pool:preallocate! reg-pool (hash-ref env freevar)))
+     (for ([param n*] [reg i*])
+       (reg-pool:preallocate! reg-pool reg)
+       (hash-set! env param reg))
+     (for ([stmt s*] [luses (hash-ref liveness 'stmt-last-uses)])
+       (Stmt stmt env reg-pool luses stmt-acc))
+     (define transfer (Transfer t kenv reg-pool stmt-acc))
+     (set-box! max-regs (max (unbox max-regs) (reg-pool:count reg-pool)))
+     (hash-set! cont-acc label `(cont ([,n* ,i*] ...) ,(gvector->list stmt-acc) ... ,transfer))])
+
+  (Stmt : Stmt (ir env reg-pool luses stmt-acc) -> Stmt ()
+    [(def (,n ,i) ,e)
+     (reg-pool:deallocate-luses! reg-pool env luses)
+     (reg-pool:preallocate! reg-pool i)
+     (hash-set! env n i)
+     (Expr e n i reg-pool stmt-acc)]
+    [,e
+     (reg-pool:deallocate-luses! reg-pool env luses)
+     (Expr e #f #f reg-pool stmt-acc)])
+
+  (Expr : Expr (ir name reg reg-pool stmt-acc) -> Expr ()
+    [(primcall0 ,p)         (emit-stmt! stmt-acc name reg `(primcall0 ,p))]
+    [(primcall1 ,p ,a)      (emit-stmt! stmt-acc name reg `(primcall1 ,p ,(Atom a)))]
+    [(primcall2 ,p ,a1 ,a2) (emit-stmt! stmt-acc name reg `(primcall2 ,p ,(Atom a1) ,(Atom a2)))]
+    [(primcall3 ,p ,a1 ,a2 ,a3)
+     (emit-stmt! stmt-acc name reg `(primcall3 ,p ,(Atom a1) ,(Atom a2) ,(Atom a3)))]
+    [,a (emit-stmt! stmt-acc name reg (Atom a))])
+
+  ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
+  (Transfer : Transfer (ir kenv reg-pool stmt-acc) -> Transfer ()
+    [(goto ,x ,a* ...)
+     (define-values (callee move-graph) (make-move-graph kenv (Var x) (map Atom a*)))
+     (let emit-moves ()
+       (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
+         (emit-move! stmt-acc dest src))
+       (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
+         (emit-move! stmt-acc dest src)
+         (emit-moves)))
+     `(goto ,callee)]
+    [(if ,a? ,x1 ,x2) `(if ,(Atom a?) ,(Var x1) ,(Var x2))]
+    [(halt ,a) `(halt ,(Atom a))])
+
+  (Atom : Atom (ir) -> Atom ()
+    [(const ,c) `(const ,c)]
+    [,x (Var x)])
+
+  (Var : Var (ir) -> Var ()
+    [(reg ,i) `(reg ,i)]
+    [(label ,n) `(label ,n)]
+    [(proc ,n) `(proc ,n)]))
+
+(define (allocate-registers ir)
+  (let ((liveness (make-hash))
+        (dom-forests (make-hash)))
+    (~> (allocate ir liveness dom-forests)
+        (schedule-moves liveness dom-forests))))

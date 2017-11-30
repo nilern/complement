@@ -1,42 +1,48 @@
 #lang racket/base
 
 (module+ main
-  (require racket/match racket/cmdline (only-in racket/function identity) (only-in srfi/26 cute)
+  (require racket/match
+           racket/cmdline
            racket/pretty
-           nanopass/base
-           "langs.rkt"
-           "passes/parse.rkt" "passes/cst.rkt" "passes/ast.rkt" "passes/cps.rkt"
-           (prefix-in cpcps: "passes/cpcps.rkt") "passes/register-allocation.rkt"
-           "passes/codegen.rkt" (only-in "passes/bytecode.rkt" serialize-chunk)
-           "eval/cst.rkt" "eval/cps.rkt" "eval/cpcps.rkt")
+
+           (only-in "passes/parse.rkt" parse)
+           (prefix-in cst: "passes/cst.rkt")
+           (only-in "passes/ast.rkt" cps-convert)
+           (prefix-in cps: "passes/cps.rkt")
+           (prefix-in cpcps: "passes/cpcps.rkt")
+           (only-in "passes/register-allocation.rkt" allocate-registers)
+           (prefix-in codegen: "passes/codegen.rkt")
+           (only-in "passes/bytecode.rkt" serialize-chunk)
+           (only-in "eval/cst.rkt" eval-Cst)
+           (only-in "eval/cps.rkt" eval-CPS)
+           (only-in "eval/cpcps.rkt" eval-CPCPS))
 
   (define output (current-output-port))
   (define cps-ltab (make-hash))
   (define cps-vtab (make-hash))
-  (define liveness (make-hash))
-  (define dom-forests (make-hash))
 
   (define passes
     (list parse
-          alphatize
-          infer-decls
-          lex-straighten
-          introduce-dyn-env
-          add-dispatch
+          cst:alphatize
+          cst:infer-decls
+          cst:lex-straighten
+          cst:introduce-dyn-env
+          cst:add-dispatch
+
           cps-convert
           (lambda (cps)
-            (census cps cps-ltab cps-vtab 1)
-            (relax-edges cps cps-ltab cps-vtab))
-          (lambda (cps) (closure-convert cps (analyze-closures cps) cps-ltab))
+            (cps:census cps cps-ltab cps-vtab 1)
+            (cps:relax-edges cps cps-ltab cps-vtab))
+          (lambda (cps) (cps:closure-convert cps (cps:analyze-closures cps) cps-ltab))
+
           cpcps:select-instructions ; TODO: move this after `cpcps:shrink`
           cpcps:shrink
-          (cute allocate-registers <> liveness dom-forests)
-          (cute schedule-moves <> liveness dom-forests)
-          collect-constants ; TODO: move this after serialize-conts
-          serialize-conts
-          fallthrough
-          resolve
-          assemble-chunk
+          allocate-registers
+          codegen:collect-constants ; TODO: move this after serialize-conts
+          codegen:serialize-conts
+          codegen:fallthrough
+          codegen:resolve
+          codegen:assemble-chunk
           (lambda (chunk) (serialize-chunk chunk output))))
 
   (define evals
