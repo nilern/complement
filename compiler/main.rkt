@@ -29,8 +29,8 @@
 
   (define passes
     (hash
-      'source-port       (pass '() (lambda () input) #f)
-      'parse             (pass '(source-port) parse eval-Cst) ; TODO: Fill out missing syntax.
+      ;; TODO: Fill out missing syntax:
+      'parse             (pass '() (lambda () (parse input)) eval-Cst)
       'alphatize         (pass '(parse) cst:alphatize eval-Cst)
       'infer-decls       (pass '(alphatize) cst:infer-decls #f) ; TODO: Remove.
       'lex-straighten    (pass '(infer-decls) cst:lex-straighten #f)
@@ -55,11 +55,10 @@
 
       'select-instructions (pass '(cpcps-shrink) cpcps:select-instructions #f)
       'allocate-registers  (pass '(select-instructions cpcps-label-table) allocate-registers #f)
-      ;; TODO: Move downwards, maybe merge with something:
-      'collect-constants   (pass '(allocate-registers) codegen:collect-constants #f)
-      'linearize           (pass '(collect-constants) codegen:linearize #f)
+      'linearize           (pass '(allocate-registers cpcps-label-table) codegen:linearize #f)
       'resolve             (pass '(linearize) codegen:resolve #f)
-      'assemble            (pass '(resolve)(cute codegen:assemble <> output)  #f)))
+      'collect-constants   (pass '(resolve) codegen:collect-constants #f)
+      'assemble            (pass '(collect-constants) (cute codegen:assemble <> output) #f)))
 
   (define (perform-upto f pass-name)
     (define results (make-hash))

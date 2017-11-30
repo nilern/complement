@@ -5,7 +5,7 @@
          data/gvector
          (only-in srfi/26 cute) (only-in threading ~>)
          nanopass/base
-         (only-in "../langs.rkt" ResolvedAsm))
+         (only-in "../langs.rkt" ConstPoolAsm))
 
 ;; FIXME: assert that indices fit into instr fields
 
@@ -47,12 +47,12 @@
 (define encode-op (cute hash-ref op-encodings <>))
 
 (define (unwrap-reg atom)
-  (nanopass-case (ResolvedAsm Atom) atom
+  (nanopass-case (ConstPoolAsm Atom) atom
     [(reg ,i) i]
     [else (error "not a reg" atom)]))
 
 (define (encode-arg-atom arg-atom)
-  (nanopass-case (ResolvedAsm Atom) arg-atom
+  (nanopass-case (ConstPoolAsm Atom) arg-atom
     [(reg ,i)      (bit-or (ash i arg-atom-index-shift) 0)]
     [(const ,i)    (bit-or (ash i arg-atom-index-shift) 1)]
     [(label ,n ,i) (error "unimplemented encoding" arg-atom)]
@@ -95,7 +95,7 @@
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [((or '__flibSym) (list a b))
        (define src-reg
-         (nanopass-case (ResolvedAsm Atom) a
+         (nanopass-case (ConstPoolAsm Atom) a
            [(reg ,i) i]
            [else (error "not a reg" a)]))
        (~> (ash (encode-arg-atom b) arg-atom-shift)
@@ -108,11 +108,11 @@
     (match* (op args)
       [((or '__fnInitCode) (list dest proc))
        (define dest-reg
-         (nanopass-case (ResolvedAsm Atom) dest
+         (nanopass-case (ConstPoolAsm Atom) dest
            [(reg ,i) i]
            [else (error "not a reg" dest)]))
        (define proc-index
-         (nanopass-case (ResolvedAsm Atom) proc
+         (nanopass-case (ConstPoolAsm Atom) proc
            [(proc ,n ,i) i]
            [else (error "not a proc" proc)]))
        (~> (ash proc-index 16)
@@ -120,11 +120,11 @@
            (bit-or (encode-op op)))]
       [((or '__contInitCode) (list dest label))
        (define dest-reg
-         (nanopass-case (ResolvedAsm Atom) dest
+         (nanopass-case (ConstPoolAsm Atom) dest
            [(reg ,i) i]
            [else (error "not a reg" dest)]))
        (define label-offset
-         (nanopass-case (ResolvedAsm Atom) label
+         (nanopass-case (ConstPoolAsm Atom) label
            [(label ,n ,i) i]
            [else (error "not a label" label)]))
        (~> (ash label-offset 16)
@@ -142,7 +142,7 @@
             '__tupleInit '__fnInit '__contInit '__recInitType '__recInit)
         (cons dest args))
        (define dest-reg
-         (nanopass-case (ResolvedAsm Atom) dest
+         (nanopass-case (ConstPoolAsm Atom) dest
            [(reg ,i) i]
            [else (error "not a reg" dest)]))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
@@ -158,7 +158,7 @@
          (bit-or (ash (encode-arg-atom a?) arg-atom-shift))
          (bit-or (encode-op op)))]
     [('__jmp (list x))
-     (nanopass-case (ResolvedAsm Var) x
+     (nanopass-case (ConstPoolAsm Var) x
        [(label ,n ,i) (~> (ash i arg-index-shift)
                           (bit-or (encode-op '__jmp)))]
        [(reg ,i) (~> (ash i arg-index-shift)

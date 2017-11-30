@@ -2,7 +2,7 @@
 
 (provide name? const? primop?
          Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
-         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash ConstPoolCPCPS Asm ResolvedAsm)
+         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash Asm ResolvedAsm ConstPoolAsm)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -209,25 +209,8 @@
   (define-values (tag repr) (InstrCPCPS-Atom-deconstruct atom))
   (+ tag (equal-hash-code repr)))
 
-(define-language ConstPoolCPCPS
-  (extends InstrCPCPS)
-
-  (Program ()
-    (- (prog ([n* blocks*] ...) i n))
-    (+ (prog ([n* f*] ...) i n)))
-
-  (CFG (blocks)
-    (- (cfg ([n1* k*] ...) (n2* ...))))
-
-  (Fn (f)
-    (+ (fn (c* ...) ([n1* k*] ...) (n2* ...))))
-
-  (Atom (a)
-    (- (const c))
-    (+ (const i))))
-
 (define-language Asm
-  (extends ConstPoolCPCPS)
+  (extends InstrCPCPS)
 
   (Cont (k)
     (- (cont ([n* i*] ...) s* ... t))
@@ -244,12 +227,12 @@
   (extends Asm)
 
   (Program ()
-    (- (prog ([n* f*] ...) i n))
-    (+ (prog ([n* f*] ...) i1 (n i2))))
+    (- (prog ([n* blocks*] ...) i n))
+    (+ (prog ([n* blocks*] ...) i1 (n i2))))
 
-  (Fn (f)
-    (- (fn (c* ...) ([n1* k*] ...) (n2* ...)))
-    (+ (fn (c* ...) ([n1* k*] ...) ([n2* i*] ...))))
+  (CFG (blocks)
+    (- (cfg ([n1* k*] ...) (n2* ...)))
+    (+ (cfg ([n1* k*] ...) ([n2* i*] ...))))
 
   (Transfer (t)
     (- (br n))
@@ -262,3 +245,20 @@
     (+ (label n i))
     (- (proc n))
     (+ (proc n i))))
+
+(define-language ConstPoolAsm
+  (extends ResolvedAsm)
+
+  (Program ()
+    (- (prog ([n* blocks*] ...) i1 (n i2)))
+    (+ (prog ([n* f*] ...) i1 (n i2))))
+
+  (CFG (blocks)
+    (- (cfg ([n1* k*] ...) ([n2* i*] ...))))
+
+  (Fn (f)
+    (+ (fn (c* ...) ([n1* k*] ...) ([n2* i*] ...))))
+
+  (Atom (a)
+    (- (const c))
+    (+ (const i))))
