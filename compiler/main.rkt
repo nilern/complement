@@ -1,5 +1,8 @@
 #lang racket/base
 
+;;; TODO: Primop infrastructure for evaluators (and assembly?)
+;;; TODO: Missing evaluators
+
 (module+ main
   (require racket/match
            racket/cmdline
@@ -21,44 +24,48 @@
   (define input  (current-input-port))
   (define output (current-output-port))
 
-  (struct pass (action dependencies evaluator))
+  (struct pass (dependencies action evaluator))
 
   (define passes
     (hash
-      'source-port       (pass (lambda () input) '() #f)
-      'parse             (pass parse '(source-port) eval-Cst) ; TODO: Fill out missing syntax.
-      'alphatize         (pass cst:alphatize '(parse) eval-Cst)
-      'infer-decls       (pass cst:infer-decls '(alphatize) #f) ; TODO: Remove.
-      'lex-straighten    (pass cst:lex-straighten '(infer-decls) #f)
-      'introduce-dyn-env (pass cst:introduce-dyn-env '(lex-straighten) #f)
-      'add-dispatch      (pass cst:add-dispatch '(introduce-dyn-env) #f)
+      'source-port       (pass '() (lambda () input) #f)
+      'parse             (pass '(source-port) parse eval-Cst) ; TODO: Fill out missing syntax.
+      'alphatize         (pass '(parse) cst:alphatize eval-Cst)
+      'infer-decls       (pass '(alphatize) cst:infer-decls #f) ; TODO: Remove.
+      'lex-straighten    (pass '(infer-decls) cst:lex-straighten #f)
+      'introduce-dyn-env (pass '(lex-straighten) cst:introduce-dyn-env #f)
+      'add-dispatch      (pass '(introduce-dyn-env) cst:add-dispatch #f)
 
-      'cps-convert      (pass cps-convert '(add-dispatch) eval-CPS)
-      'cps-census       (pass (lambda (cps)
+      ;; TODO: Try to get rid of the lambdas:
+      'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
+      'cps-census       (pass '(cps-convert)
+                              (lambda (cps)
                                 (let ([ltab (make-hash)] [vtab (make-hash)])
                                    (cps:census cps ltab vtab 1)
                                    (hash 'label-table ltab 'var-table vtab)))
-                              '(cps-convert) #f)
-      'relax-edges      (pass (lambda (ir census-tables)
+                              #f)
+      'relax-edges      (pass '(cps-convert cps-census)
+                              (lambda (ir census-tables)
                                 (cps:relax-edges ir (hash-ref census-tables 'label-table)
                                                  (hash-ref census-tables 'var-table)))
-                              '(cps-convert cps-census) eval-CPS)
-      'analyze-closures (pass cps:analyze-closures '(relax-edges) #f)
-      'closure-convert  (pass (lambda (ir census-tables closure-stats)
+                              eval-CPS)
+      'analyze-closures (pass '(relax-edges) cps:analyze-closures #f)
+      'closure-convert  (pass '(relax-edges cps-census analyze-closures)
+                              (lambda (ir census-tables closure-stats)
                                 (cps:closure-convert ir closure-stats
                                                      (hash-ref census-tables 'label-table)))
                               ;; FIXME: cps-census doesn't contain the new conts from relax-edges:
-                              '(relax-edges cps-census analyze-closures) eval-CPCPS)
+                              eval-CPCPS)
                                                                                 ; <--
                                                                                   ; |
-      'select-instructions (pass cpcps:select-instructions '(closure-convert) #f) ; |
-      'cpcps-shrink        (pass cpcps:shrink '(select-instructions) #f) ; TODO: ----
-      'allocate-registers  (pass allocate-registers '(cpcps-shrink) #f)
+      'select-instructions (pass '(closure-convert) cpcps:select-instructions #f) ; |
+      'cpcps-shrink        (pass '(select-instructions) cpcps:shrink #f) ; TODO: ----
+      'allocate-registers  (pass '(cpcps-shrink) allocate-registers #f)
       ;; TODO: Move downwards, maybe merge with something:
-      'collect-constants   (pass codegen:collect-constants '(allocate-registers) #f)
-      'linearize           (pass codegen:linearize '(collect-constants) #f)
-      'resolve             (pass codegen:resolve '(linearize) #f)
-      'assemble            (pass (cute codegen:assemble <> output) '(resolve) #f)))
+      'collect-constants   (pass '(allocate-registers) codegen:collect-constants #f)
+      'linearize           (pass '(collect-constants) codegen:linearize #f)
+      'resolve             (pass '(linearize) codegen:resolve #f)
+      'assemble            (pass '(resolve)(cute codegen:assemble <> output)  #f)))
 
   (define (perform-upto f pass-name)
     (define results (make-hash))
