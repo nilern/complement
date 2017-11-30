@@ -4,8 +4,10 @@
          while when-let if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
+;; TODO: Remove.
 (struct exn:unbound exn:fail ())
 
+;; TODO: Remove.
 (define (hash-env-ref env name)
   (if (hash-has-key? env name)
     (hash-ref env name)
@@ -74,6 +76,7 @@
          stmts ...
          (loop)))]))
 
+;; TODO: Remove.
 (module* cont-env #f
   (provide (rename-out [zip-hash inject]
                        [hash-env-ref ref])))

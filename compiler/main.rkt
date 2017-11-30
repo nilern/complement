@@ -15,6 +15,7 @@
            (only-in "passes/ast.rkt" cps-convert)
            (prefix-in cps: "passes/cps.rkt")
            (prefix-in cpcps: "passes/cpcps.rkt")
+           (prefix-in ltab: (submod "passes/cpcps.rkt" label-table))
            (only-in "passes/register-allocation.rkt" allocate-registers)
            (prefix-in codegen: "passes/codegen.rkt")
            (only-in "eval/cst.rkt" eval-Cst)
@@ -49,11 +50,11 @@
                                 (cps:closure-convert ir closure-stats
                                                         (hash-ref census-tables 'label-table)))
                               eval-CPCPS)
-                                                                                ; <--
-                                                                                  ; |
-      'select-instructions (pass '(closure-convert) cpcps:select-instructions #f) ; |
-      'cpcps-shrink        (pass '(select-instructions) cpcps:shrink #f) ; TODO: ----
-      'allocate-registers  (pass '(cpcps-shrink) allocate-registers #f)
+      'cpcps-label-table   (pass '(closure-convert) ltab:make #f)
+      'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps:shrink #f)
+
+      'select-instructions (pass '(cpcps-shrink) cpcps:select-instructions #f)
+      'allocate-registers  (pass '(select-instructions cpcps-label-table) allocate-registers #f)
       ;; TODO: Move downwards, maybe merge with something:
       'collect-constants   (pass '(allocate-registers) codegen:collect-constants #f)
       'linearize           (pass '(collect-constants) codegen:linearize #f)

@@ -11,7 +11,6 @@
          nanopass/base
 
          (rename-in "../langs.rkt" (InstrCPCPS-Atom=? atom=?) (InstrCPCPS-Atom-hash hash-atom))
-         (prefix-in ltab: (submod "cpcps.rkt" label-table))
          (prefix-in kenv: (submod "../util.rkt" cont-env))
          (prefix-in cfg: "../cfg.rkt")
          (only-in "../util.rkt" zip-hash unzip-hash when-let-values while-let-values))
@@ -166,14 +165,14 @@
 
 ;; TODO: Return multiple values instead of mutating `liveness` and `dom-forests`.
 ;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
-(define-pass allocate : RegisterizableCPCPS (ir livenesses dom-forests) -> RegCPCPS ()
+(define-pass allocate : RegisterizableCPCPS (ir ltabs livenesses dom-forests) -> RegCPCPS ()
   (Program : Program (ir) -> Program ()
     [(prog ([,n* ,blocks*] ...) ,n)
      `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
 
   (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
-     (define ltab (ltab:make n1* k* n2*))
+     (define ltab (hash-ref ltabs name))
      (define dom-forest (cfg:dominator-forest ltab (cfg:reverse-postorder ltab n2*) n2*))
      (hash-set! dom-forests name dom-forest)
      (define liveness (cfg-liveness ir))
@@ -424,8 +423,8 @@
     [(label ,n) `(label ,n)]
     [(proc ,n) `(proc ,n)]))
 
-(define (allocate-registers ir)
-  (let ((liveness (make-hash))
+(define (allocate-registers ir ltabs)
+  (let ((livenesses (make-hash))
         (dom-forests (make-hash)))
-    (~> (allocate ir liveness dom-forests)
-        (schedule-moves liveness dom-forests))))
+    (~> (allocate ir ltabs livenesses dom-forests)
+        (schedule-moves livenesses dom-forests))))
