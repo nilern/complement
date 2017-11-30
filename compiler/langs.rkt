@@ -1,8 +1,9 @@
 #lang racket/base
 
 (provide name? const? primop?
-         Cst DeclCst DynDeclCst LexCst Ast CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS
-         InstrCPCPS-Atom=? InstrCPCPS-Atom-hash Asm ResolvedAsm ConstPoolAsm)
+         Cst LexCst Ast
+         CPS CPCPS RegisterizableCPCPS RegCPCPS InstrCPCPS InstrCPCPS-Atom=? InstrCPCPS-Atom-hash
+         Asm ResolvedAsm ConstPoolAsm)
 (require nanopass/base)
 
 ;;; TODO: restrict (call e e* ...)
@@ -47,26 +48,10 @@
     (lex n)
     (dyn n)))
 
-(define-language DeclCst
+(define-language LexCst
   (extends Cst)
 
   (Expr (e)
-    (- (block s* ... e))
-    (+ (block (x* ...) s* ... e))))
-
-(define-language DynDeclCst
-  (extends DeclCst)
-
-  (Expr (e)
-    (- (block (x* ...) s* ... e))
-    (+ (block (n* ...) s* ... e))))
-
-(define-language LexCst
-  (extends DynDeclCst)
-
-  (Expr (e)
-    (- (block (n* ...) s* ... e))
-    (+ (block s* ... e))
     (- (fn fc* ...))
     (+ (fn n fc ...))
     (- x)

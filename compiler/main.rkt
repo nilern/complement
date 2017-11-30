@@ -32,8 +32,7 @@
       ;; TODO: Fill out missing syntax:
       'parse             (pass '() (lambda () (parse input)) eval-Cst)
       'alphatize         (pass '(parse) cst:alphatize eval-Cst)
-      'infer-decls       (pass '(alphatize) cst:infer-decls #f) ; TODO: Remove.
-      'lex-straighten    (pass '(infer-decls) cst:lex-straighten #f)
+      'lex-straighten    (pass '(alphatize) cst:lex-straighten #f)
       'introduce-dyn-env (pass '(lex-straighten) cst:introduce-dyn-env #f)
       'add-dispatch      (pass '(introduce-dyn-env) cst:add-dispatch #f)
 

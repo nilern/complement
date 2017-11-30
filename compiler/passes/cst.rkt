@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide alphatize infer-decls lex-straighten introduce-dyn-env add-dispatch)
+(provide alphatize lex-straighten introduce-dyn-env add-dispatch)
 (require racket/match racket/list racket/hash (only-in srfi/26 cute) (only-in threading ~>>)
          (only-in racket/function identity)
          nanopass/base
@@ -42,21 +42,7 @@
 
   (Expr cst (hash)))
 
-(define-pass infer-decls : Cst (cst) -> DeclCst ()
-  (definitions
-    (define (binders stmts)
-      (define (stmt-binders stmt)
-        (with-output-language (DeclCst Var)
-          (nanopass-case (DeclCst Stmt) stmt
-            [(def (lex ,n) ,e) (list `(lex ,n))]
-            [(def (dyn ,n) ,e) (list `(dyn ,n))]
-            [,e '()])))
-      (append-map stmt-binders stmts)))
-
-  (Expr : Expr (cst) -> Expr ()
-    [(block ,[s*] ... ,[e]) `(block (,(binders s*) ...) ,s* ... ,e)]))
-
-(define-pass lex-straighten : DeclCst (cst) -> DynDeclCst ()
+(define-pass lex-straighten : Cst (ir) -> Cst ()
   (definitions
     (define (env:empty) (hash))
 
@@ -72,77 +58,80 @@
 
     (define env:ref hash-ref)
 
-    (define (lex-params decls)
-      (reverse (for/fold ([lex-decls '()])
-                         ([decl decls])
-                 (nanopass-case (DynDeclCst Var) decl
-                   [(lex ,n) (cons n lex-decls)]
-                   [(dyn ,n) lex-decls]))))
+    (define (case-binders params)
+      (define (step param binders)
+        (nanopass-case (Cst Var) param
+          [(lex ,n) (cons n binders)]
+          [(dyn ,n) binders]))
+      (foldr step '() params))
 
-    (define (partition-decls decls)
-      (define-values (lex-decls dyn-decls)
-        (for/fold ([lex-decls '()] [dyn-decls '()])
-                  ([decl decls])
-          (nanopass-case (DeclCst Var) decl
-            [(lex ,n) (values (cons n lex-decls) dyn-decls)]
-            [(dyn ,n) (values lex-decls (cons n dyn-decls))])))
-      (values (reverse lex-decls) (reverse dyn-decls)))
+    (define (block-binders stmts)
+      (define (step stmt binders)
+        (nanopass-case (Cst Stmt) stmt
+          [(def (lex ,n) ,e) (cons n binders)]
+          [else binders]))
+      (foldr step '() stmts))
 
-    (with-output-language (DynDeclCst Stmt)
-      (define (emit-init env name)
+    (define (emit-init env name)
+      (with-output-language (Cst Stmt)
         (match (env:ref env name)
           [(or 'plain (box 'plain) (box #f)) #f]
-          [(box 'boxed) `(def (lex ,name) (primcall __boxNew))]))
-      (define (emit-set env name expr)
+          [(box 'boxed) `(def (lex ,name) (primcall __boxNew))])))
+
+    (define (emit-set env name expr)
+      (with-output-language (Cst Stmt)
         (match (env:ref env name)
           [(or 'plain (box 'plain)) `(def (lex ,name) ,expr)]
           [(and loc (box #f))
            (set-box! loc 'plain)
            `(def (lex ,name) ,expr)]
           [(box 'boxed) `(primcall __boxSet (lex ,name) ,expr)])))
-    (with-output-language (DynDeclCst Expr)
-      (define (emit-get env name)
+
+    (define (emit-get env name)
+      (with-output-language (Cst Expr)
         (match (env:ref env name)
           [(or 'plain (box 'plain)) `(lex ,name)]
           [(and loc (box status))
            (unless status (set-box! loc 'boxed))
            `(primcall __boxGet (lex ,name))]))))
 
-  (Expr : Expr (cst env) -> Expr ()
-    [(block (,x* ...) ,s* ... ,e)
-     (define-values (lex-decls dyn-decls) (partition-decls x*))
-     (define env* (env:push-block env lex-decls))
-     (define stmts (map (cute Stmt <> env*) s*))
-     (define expr (Expr e env*))
-     `(block (,dyn-decls ...)
-             ,(append (filter identity (map (cute emit-init env* <>) lex-decls))
-                      stmts) ...
-             ,expr)]
+  (Expr : Expr (ir env) -> Expr ()
+    [(block ,s* ... ,e)
+     (let* ([binders (block-binders s*)]
+            [env (env:push-block env binders)]
+            [stmts (map (cute Stmt <> env) s*)]
+            [expr (Expr e env)])
+       `(block ,(filter identity (map (cute emit-init env <>) binders)) ...
+               ,stmts ...
+               ,expr))]
     [(lex ,n) (emit-get env n)])
 
-  (Stmt : Stmt (cst env) -> Stmt ()
+  (Stmt : Stmt (ir env) -> Stmt ()
     [(def (lex ,n) ,[e]) (emit-set env n e)])
 
-  (Case : Case (cst env) -> Case ()
-    [(case (,[x*] ...) ,e? ,e)
-     (define lex-decls (lex-params x*))
-     (define env* (env:push-fn env lex-decls))
-     `(case (,x* ...) ,(Expr e? env*) ,(Expr e env*))])
+  (Case : Case (ir env) -> Case ()
+    [(case (,x* ...) ,e? ,e)
+     (let ([env (env:push-fn env (case-binders x*))])
+       `(case (,x* ...) ,(Expr e? env) ,(Expr e env)))])
 
-  (Expr cst (env:empty)))
+  (Expr ir (env:empty)))
 
-(define-pass introduce-dyn-env : DynDeclCst (cst) -> LexCst ()
+(define-pass introduce-dyn-env : Cst (cst) -> LexCst ()
   (definitions
-    (with-output-language (LexCst Expr)
-      (define (block-bindings decls)
-        (for/list ([decl decls])
-          (list `(const ,decl) `(primcall __boxNew))))
+    (define (block-bindings stmts)
+      (with-output-language (LexCst Expr)
+        (define (step stmt bindings)
+          (nanopass-case (Cst Stmt) stmt
+            [(def (dyn ,n) ,e) (cons (list `(const ,n) `(primcall __boxNew)) bindings)]
+            [else bindings]))
+        (foldr step '() stmts)))
 
-      (define (fn-bindings params)
+    (define (fn-bindings params)
+      (with-output-language (LexCst Expr)
         (define-values (bindings lex-params)
           (for/fold ([bindings '()] [lex-params '()])
                     ([param params])
-            (nanopass-case (DynDeclCst Var) param
+            (nanopass-case (Cst Var) param
               [(lex ,n) (values bindings (cons n lex-params))]
               [(dyn ,n)
                (define n* (gensym n))
@@ -150,25 +139,27 @@
                        (cons n* lex-params))])))
         (values (reverse bindings) (reverse lex-params))))
 
-    (with-output-language (LexCst Stmt)
-      (define (emit-init denv-name)
-        `(def ,denv-name (primcall __denvNew)))
-      (define (emit-push denv-name bindings)
+    (define (emit-init denv-name)
+      (with-output-language (LexCst Stmt)
+        `(def ,denv-name (primcall __denvNew))))
+
+    (define (emit-push denv-name bindings)
+      (with-output-language (LexCst Stmt)
         (match bindings
           ['() (values #f denv-name)]
           [_ (define denv-name* (gensym 'denv))
              (values `(def ,denv-name* (primcall __denvPush ,denv-name ,(flatten bindings) ...))
                      denv-name*)])))
 
-    (with-output-language (LexCst Expr)
-      (define (emit-get denv-name name)
-        `(primcall __denvGet ,denv-name (const ,name)))
-      (define (emit-set denv-name name expr)
-        `(primcall __boxSet ,(emit-get denv-name name) ,expr))))
+    (define (emit-get denv-name name)
+      (with-output-language (LexCst Expr) `(primcall __denvGet ,denv-name (const ,name))))
+
+    (define (emit-set denv-name name expr)
+      (with-output-language (LexCst Expr)`(primcall __boxSet ,(emit-get denv-name name) ,expr))))
 
   (Expr : Expr (cst denv-name) -> Expr ()
-    [(block (,n* ...) ,s* ... ,e)
-     (let*-values ([(bindings) (block-bindings n*)]
+    [(block ,s* ... ,e)
+     (let*-values ([(bindings) (block-bindings s*)]
                    [(push denv-name*) (emit-push denv-name bindings)]
                    [(stmts) (map (cute Stmt <> denv-name*) s*)]
                    [(expr) (Expr e denv-name*)])
@@ -208,7 +199,7 @@
       (nanopass-case (Ast Expr) expr
         [(const ,c) (values #t c)]
         [else (values #f expr)]))
-  
+
     (define (emit-cases argv cases)
       (with-output-language (Ast Expr)
         (match cases
