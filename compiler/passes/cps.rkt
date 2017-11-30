@@ -8,14 +8,14 @@
          (prefix-in kenv: (submod "../util.rkt" cont-env)))
 
 ;; TODO: use this in shrinking
-(define-pass census : CPS (ir ltab vtab delta) -> * ()
+(define-pass census! : CPS (ir delta ltab vtab) -> * ()
   (definitions
     (define (make-var-entry) (make-hash '((uses . 0))))
-    
+
     (define (make-label-entry) (make-hash '((calls . 0) (escapes . 0))))
-    
+
     (define add-delta (cute + <> delta))
-  
+
     (define (used! var-table name)
       (~> (hash-ref! var-table name make-var-entry)
           (hash-update! 'uses add-delta)))
@@ -23,7 +23,7 @@
     (define (escapes! label-table name)
       (~> (hash-ref! label-table name make-label-entry)
           (hash-update! 'escapes add-delta)))
-          
+
     (define (called! label-table name)
       (~> (hash-ref! label-table name make-label-entry)
           (hash-update! 'calls add-delta))))
@@ -41,7 +41,7 @@
   (Stmt : Stmt (ir) -> * ()
     [(def ,n ,e) (Expr e)]
     [,e (Expr e)])
-    
+
   (Transfer : Transfer (ir) -> * ()
     [(continue ,x ,a* ...) (Callee x) (for-each Atom a*)]
     [(if ,a? ,x1 ,x2) (Atom a?) (Callee x1) (Callee x2)]
@@ -65,10 +65,17 @@
     [(lex ,n) (used! vtab n)]
     [(label ,n) (called! ltab n)]))
 
+(define (census ir delta)
+  (let ([label-table (make-hash)]
+        [var-table (make-hash)])
+    (census! ir delta label-table var-table)
+    (hash 'label-table label-table 'var-table var-table)))
+
+;; TODO: Don't mutate the census tables.
 (define-pass relax-edges : CPS (ir ltab vtab) -> CPS ()
   (definitions
     (struct $cfg-builder (conts entry))
-    
+
     (define (make-cfg-builder entry)
       ($cfg-builder (make-hash) entry))
 
@@ -151,7 +158,7 @@
     [(primcall ,p ,a* ...)
      `(primcall ,p ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
     [,a (Atom a kenv cfg-builder)])
-    
+
   (Transfer : Transfer (ir kenv cfg-builder) -> Transfer ()
     [(continue ,x ,a* ...)
      `(continue ,(Callee x kenv cfg-builder) ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
@@ -238,11 +245,11 @@
     (define (freevars table label)
       (~> (hash-ref table label)
           (hash-ref 'freevars)))
-    
+
     (define (use-clover! table label name)
       (~> (freevars table label)
           (set-add! name)))
-  
+
     (define (transitively! table label env src-label)
       (define fvs (freevars table label))
       (for ([fv (freevars table src-label)]

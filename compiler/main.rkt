@@ -36,25 +36,18 @@
       'introduce-dyn-env (pass '(lex-straighten) cst:introduce-dyn-env #f)
       'add-dispatch      (pass '(introduce-dyn-env) cst:add-dispatch #f)
 
-      ;; TODO: Try to get rid of the lambdas:
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
-      'cps-census       (pass '(cps-convert)
-                              (lambda (cps)
-                                (let ([ltab (make-hash)] [vtab (make-hash)])
-                                   (cps:census cps ltab vtab 1)
-                                   (hash 'label-table ltab 'var-table vtab)))
-                              #f)
+      'cps-census       (pass '(cps-convert) (cute cps:census <> 1) #f)
       'relax-edges      (pass '(cps-convert cps-census)
                               (lambda (ir census-tables)
                                 (cps:relax-edges ir (hash-ref census-tables 'label-table)
-                                                 (hash-ref census-tables 'var-table)))
+                                                    (hash-ref census-tables 'var-table)))
                               eval-CPS)
       'analyze-closures (pass '(relax-edges) cps:analyze-closures #f)
       'closure-convert  (pass '(relax-edges cps-census analyze-closures)
                               (lambda (ir census-tables closure-stats)
                                 (cps:closure-convert ir closure-stats
-                                                     (hash-ref census-tables 'label-table)))
-                              ;; FIXME: cps-census doesn't contain the new conts from relax-edges:
+                                                        (hash-ref census-tables 'label-table)))
                               eval-CPCPS)
                                                                                 ; <--
                                                                                   ; |
