@@ -27,9 +27,9 @@
   (define passes
     (hash
       'source-port       (pass (lambda () input) '() #f)
-      'parse             (pass parse '(source-port) eval-Cst)
+      'parse             (pass parse '(source-port) eval-Cst) ; TODO: Fill out missing syntax.
       'alphatize         (pass cst:alphatize '(parse) eval-Cst)
-      'infer-decls       (pass cst:infer-decls '(alphatize) #f)
+      'infer-decls       (pass cst:infer-decls '(alphatize) #f) ; TODO: Remove.
       'lex-straighten    (pass cst:lex-straighten '(infer-decls) #f)
       'introduce-dyn-env (pass cst:introduce-dyn-env '(lex-straighten) #f)
       'add-dispatch      (pass cst:add-dispatch '(introduce-dyn-env) #f)
@@ -48,15 +48,17 @@
       'closure-convert  (pass (lambda (ir census-tables closure-stats)
                                 (cps:closure-convert ir closure-stats
                                                      (hash-ref census-tables 'label-table)))
+                              ;; FIXME: cps-census doesn't contain the new conts from relax-edges:
                               '(relax-edges cps-census analyze-closures) eval-CPCPS)
-
-      'select-instructions (pass cpcps:select-instructions '(closure-convert) #f)
-      'cpcps-shrink        (pass cpcps:shrink '(select-instructions) #f)
+                                                                                ; <--
+      'select-instructions (pass cpcps:select-instructions '(closure-convert) #f) ; |
+      'cpcps-shrink        (pass cpcps:shrink '(select-instructions) #f) ; TODO: ----
       'allocate-registers  (pass allocate-registers '(cpcps-shrink) #f)
+      ;; TODO: Move downwards, maybe merge with something:
       'collect-constants   (pass codegen:collect-constants '(allocate-registers) #f)
-      'serialize-conts     (pass codegen:serialize-conts '(collect-constants) #f)
-      'fallthrough         (pass codegen:fallthrough '(serialize-conts) #f)
-      'resolve             (pass codegen:resolve '(fallthrough) #f)
+      'linearize           (pass codegen:linearize '(collect-constants) #f)
+      'resolve             (pass codegen:resolve '(linearize) #f)
+      ; TODO: Merge with serialize-chunk:
       'assemble-chunk      (pass codegen:assemble-chunk '(resolve) #f)
       'serialize-chunk     (pass (cute serialize-chunk <> output) '(assemble-chunk) #f)))
 

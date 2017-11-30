@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide collect-constants serialize-conts fallthrough resolve assemble-chunk)
+(provide collect-constants linearize resolve assemble-chunk)
 (require racket/match
          (only-in racket/list remove-duplicates)
          data/gvector
@@ -95,20 +95,17 @@
 
   (Fn ir))
 
-;; TODO: Also serialize procs, at least putting emtry first.
-(define-pass serialize-conts : ConstPoolCPCPS (ir) -> ConstPoolCPCPS ()
+;; TODO: Also serialize procs, at least putting entry first.
+(define-pass linearize : ConstPoolCPCPS (ir) -> Asm ()
   (Fn : Fn (ir) -> Fn ()
     [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
      (define kenv (zip-hash n1* k*))
      (define rpo (cfg:reverse-postorder (cpcpcps-cfg ir) (reverse n2*)))
-     `(fn (,c* ...) ([,rpo ,(map (cute hash-ref kenv <>) rpo)] ...) (,n2* ...))]))
-
-(define-pass fallthrough : ConstPoolCPCPS (ir) -> Asm ()
-  (Fn : Fn (ir) -> Fn ()
-    [(fn (,c* ...) ([,n1* ,k*] ...) (,n2* ...))
      `(fn (,c* ...)
-          ([,n1* ,(for/list ([cont k*] [next-label (in-sequences (cdr n1*) (in-value #f))])
-                    (Cont cont next-label))] ...)
+          ([,rpo ,(for/list ([label rpo]
+                             [next-label (in-sequences (cdr rpo) (in-value #f))])
+                    (let ([cont (hash-ref kenv label)])
+                      (Cont cont next-label)))] ...)
           (,n2* ...))])
 
   (Cont : Cont (ir next-label) -> Cont ()
