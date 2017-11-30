@@ -14,7 +14,6 @@
            (prefix-in cpcps: "passes/cpcps.rkt")
            (only-in "passes/register-allocation.rkt" allocate-registers)
            (prefix-in codegen: "passes/codegen.rkt")
-           (only-in "passes/bytecode.rkt" serialize-chunk)
            (only-in "eval/cst.rkt" eval-Cst)
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS))
@@ -51,6 +50,7 @@
                               ;; FIXME: cps-census doesn't contain the new conts from relax-edges:
                               '(relax-edges cps-census analyze-closures) eval-CPCPS)
                                                                                 ; <--
+                                                                                  ; |
       'select-instructions (pass cpcps:select-instructions '(closure-convert) #f) ; |
       'cpcps-shrink        (pass cpcps:shrink '(select-instructions) #f) ; TODO: ----
       'allocate-registers  (pass allocate-registers '(cpcps-shrink) #f)
@@ -58,9 +58,7 @@
       'collect-constants   (pass codegen:collect-constants '(allocate-registers) #f)
       'linearize           (pass codegen:linearize '(collect-constants) #f)
       'resolve             (pass codegen:resolve '(linearize) #f)
-      ; TODO: Merge with serialize-chunk:
-      'assemble-chunk      (pass codegen:assemble-chunk '(resolve) #f)
-      'serialize-chunk     (pass (cute serialize-chunk <> output) '(assemble-chunk) #f)))
+      'assemble            (pass (cute codegen:assemble <> output) '(resolve) #f)))
 
   (define (perform-upto f pass-name)
     (define results (make-hash))
@@ -75,7 +73,7 @@
   (define (main)
     (define verbose #f)
     (define evaluate #f)
-    (define required-pass 'serialize-chunk)
+    (define required-pass 'assemble)
     (command-line
       #:once-each
       [("-o") output-filename "Name of output file."
@@ -95,9 +93,10 @@
                     [_ (error "too many input files")])))
 
     (perform-upto (lambda (pass-name pass deps)
+                    (when verbose
+                      (printf "# ~a:\n\n" pass-name))
                     (let ([result (apply (pass-action pass) deps)])
                       (when verbose
-                        (printf "# ~a:\n\n" pass-name)
                         (pretty-print result)
                         (when evaluate
                           (when-let (evalf (pass-evaluator pass))

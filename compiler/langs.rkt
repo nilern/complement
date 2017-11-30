@@ -134,7 +134,7 @@
   (extends CPS)
   (entry Program)
 
-  (Program () 
+  (Program ()
     (+ (prog ([n* blocks*] ...) n)))
 
   (CFG (blocks)
@@ -184,7 +184,7 @@
 
 (define-language InstrCPCPS
   (extends RegCPCPS)
-    
+
   (Program ()
     (- (prog ([n* blocks*] ...) n))
     (+ (prog ([n* blocks*] ...) i n)))
@@ -192,14 +192,14 @@
   (Transfer (t)
     (- (goto x a* ...))
     (+ (goto x))))
-    
+
 (define (InstrCPCPS-Atom-deconstruct atom)
   (nanopass-case (InstrCPCPS Atom) atom
     [(const ,c) (values 0 c)]
     [(reg ,i)   (values 1 i)]
     [(label ,n) (values 2 n)]
     [(proc ,n)  (values 3 n)]))
-    
+
 (define (InstrCPCPS-Atom=? atom1 atom2)
   (define-values (tag1 repr1) (InstrCPCPS-Atom-deconstruct atom1))
   (define-values (tag2 repr2) (InstrCPCPS-Atom-deconstruct atom2))
@@ -229,9 +229,13 @@
 (define-language Asm
   (extends ConstPoolCPCPS)
 
+  (Cont (k)
+    (- (cont ([n* i*] ...) s* ... t))
+    (+ (cont ([n* i*] ...) s* ... (maybe t))))
+
   (Transfer (t)
     (- (goto x))
-    (+ (br (maybe n)))
+    (+ (br n))
     (+ (jmp x))
     (- (if a? x1 x2))
     (+ (brf a? n))))
@@ -246,10 +250,10 @@
   (Fn (f)
     (- (fn (c* ...) ([n1* k*] ...) (n2* ...)))
     (+ (fn (c* ...) ([n1* k*] ...) ([n2* i*] ...))))
-    
+
   (Transfer (t)
-    (- (br (maybe n)))
-    (+ (br (maybe n) (maybe i)))
+    (- (br n))
+    (+ (br n i))
     (- (brf a? n))
     (+ (brf a? n i)))
 

@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide (struct-out $chunk) serialize-chunk (struct-out $code-object) encode-stmt encode-transfer)
+(provide encode-stmt encode-transfer)
 (require racket/match
          data/gvector
          (only-in srfi/26 cute) (only-in threading ~>)
@@ -8,9 +8,6 @@
          (only-in "../langs.rkt" ResolvedAsm))
 
 ;; FIXME: assert that indices fit into instr fields
-         
-(struct $chunk (reg-demand procs entry) #:transparent)
-(struct $code-object (name consts instrs) #:transparent)
 
 (define bit-and bitwise-and)
 (define bit-or bitwise-ior)
@@ -66,7 +63,7 @@
            (~> (ash acc arg-atom-shift)
                (bit-or (encode-arg-atom arg-atom))))
          0 arg-atoms))
-         
+
 (define (encode-astmt op dest-reg encoded-args)
   (~> (ash encoded-args arg-atom-shift)
       (bit-or dest-reg)
@@ -150,7 +147,7 @@
            [else (error "not a reg" dest)]))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
       [(_ _) (error "unimplemented encoding" op)])))
-  
+
 (define (encode-transfer op . args)
   (match* (op args)
     [('__br (list i))
@@ -171,46 +168,3 @@
     [('__halt (list a))
      (~> (ash (encode-arg-atom a) arg-atom-shift)
          (bit-or (encode-op op)))]))
-
-(define (serialize-usize n out)
-  (write-bytes (integer->integer-bytes n 8 #f) out))
-  
-(define (serialize-instr instr out)
-  (write-bytes (integer->integer-bytes instr 4 #f) out))
-
-(define (serialize-raw-string str out)
-  (serialize-usize (string-length str) out)
-  (write-string str out))
-
-(define (serialize-vector vec serialize-elem out)
-  (serialize-usize (vector-length vec) out)
-  (for ([elem vec])
-    (serialize-elem elem out)))
-
-(define (serialize-const const out)
-  (cond
-    [(fixnum? const)
-     (write-byte 0 out)
-     (serialize-usize const out)]
-    [(char? const)
-     (write-byte 1 out)
-     (write-char const out)]
-    [(symbol? const)
-     (write-byte 2 out)
-     (serialize-raw-string (symbol->string const) out)]
-    [(string? const)
-     (write-byte 3 out)
-     (serialize-raw-string const out)]
-    [else (error "unable to serialize constant" const)]))
-
-(define (serialize-proc proc out)
-  (match-define ($code-object name consts instrs) proc)
-  (serialize-raw-string (symbol->string name) out)
-  (serialize-vector consts serialize-const out)
-  (serialize-vector instrs serialize-instr out))
-
-(define (serialize-chunk chunk out)
-  (match-define ($chunk regc procs entry) chunk)
-  (serialize-usize regc out)
-  (serialize-usize entry out)
-  (serialize-vector procs serialize-proc out))

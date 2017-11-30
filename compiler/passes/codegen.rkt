@@ -1,6 +1,6 @@
 #lang racket/base
 
-(provide collect-constants linearize resolve assemble-chunk)
+(provide collect-constants linearize resolve assemble)
 (require racket/match
          (only-in racket/list remove-duplicates)
          data/gvector
@@ -112,7 +112,7 @@
     [(cont ([,n* ,i*] ...) ,[s*] ... ,[t]) `(cont ([,n* ,i*] ...) ,s* ... ,t)])
 
   (Transfer : Transfer (ir next-label) -> Transfer ()
-    [(goto (label ,n)) (guard (eq? n next-label)) `(br #f)]
+    [(goto (label ,n)) (guard (eq? n next-label)) #f]
     [(goto (label ,n)) `(br ,n)]
     [(goto ,[x]) `(jmp ,x)]
     [(if ,[a?] (label ,n1) (label ,n2)) (guard (eq? n1 next-label)) `(brf ,a? ,n2)]
@@ -121,9 +121,7 @@
 (define-pass resolve : Asm (ir) -> ResolvedAsm ()
   (definitions
     (define (transfer-length transfer)
-      (nanopass-case (Asm Transfer) transfer
-        [(br ,n) (guard (not n)) 0]
-        [else 1]))
+      (if transfer 1 0))
 
     (define (cont-length cont)
       (nanopass-case (Asm Cont) cont
@@ -168,7 +166,7 @@
          (set-box! pc (+ (unbox pc) 1))
          (Stmt stmt proc-env label-env pc)))
      (set-box! pc (+ (unbox pc) (transfer-length t)))
-     (define transfer (Transfer t proc-env label-env pc))
+     (define transfer (if t (Transfer t proc-env label-env pc) #f))
      `(cont ([,n* ,i*] ...) ,stmts ... ,transfer)])
 
   (Stmt : Stmt (ir proc-env label-env pc) -> Stmt ())
@@ -176,7 +174,6 @@
   (Expr : Expr (ir proc-env label-env pc) -> Expr ())
 
   (Transfer : Transfer (ir proc-env label-env pc) -> Transfer ()
-    [(br ,n) (guard (not n)) `(br #f #f)]
     [(br ,n) `(br ,n ,(resolve-label label-env pc n))]
     [(brf ,[a?] ,n) `(brf ,a? ,n ,(resolve-label label-env pc n))])
 
@@ -186,38 +183,71 @@
     [(label ,n) `(label ,n ,(resolve-label label-env pc n))]
     [(proc ,n) `(proc ,n ,(hash-ref proc-env n))]))
 
-(define-pass assemble-chunk : ResolvedAsm (ir) -> * ()
+(define-pass assemble : ResolvedAsm (ir out) -> * ()
+  (definitions
+    (define (serialize-usize n out)
+      (write-bytes (integer->integer-bytes n 8 #f) out))
+
+    (define (serialize-instr instr out)
+      (write-bytes (integer->integer-bytes instr 4 #f) out))
+
+    (define (serialize-raw-string str out)
+      (serialize-usize (string-length str) out)
+      (write-string str out))
+
+    (define (serialize-const const out)
+      (cond
+        [(fixnum? const)
+         (write-byte 0 out)
+         (serialize-usize const out)]
+        [(char? const)
+         (write-byte 1 out)
+         (write-char const out)]
+        [(symbol? const)
+         (write-byte 2 out)
+         (serialize-raw-string (symbol->string const) out)]
+        [(string? const)
+         (write-byte 3 out)
+         (serialize-raw-string const out)]
+        [else (error "unable to serialize constant" const)]))
+
+    (define (instr-len cont)
+      (nanopass-case (ResolvedAsm Cont) cont
+        [(cont ([,n* ,i*] ...) ,s* ... ,t) (+ (length s*) (if t 1 0))])))
+
   (Program : Program (ir) -> * ()
     [(prog ([,n* ,f*] ...) ,i1 (,n ,i2))
-     (bytecode:$chunk i1 (for/vector ([name n*] [f f*]) (Fn f name)) i2)])
+     (serialize-usize i1 out)
+     (serialize-usize i2 out)
+     (serialize-usize (length n*) out)
+     (for ([name n*] [f f*]) (Fn f name))])
 
   (Fn : Fn (ir name) -> * ()
     [(fn (,c* ...) ([,n1* ,k*] ...) ([,n2* ,i*] ...))
-     (define instr-acc (make-gvector))
-     (for-each (cute Cont <> instr-acc) k*)
-     (bytecode:$code-object name
-                           (list->vector c*)
-                           (gvector->vector instr-acc))])
+     (serialize-raw-string (symbol->string name) out)
+     (serialize-usize (length c*) out)
+     (for ([c c*]) (serialize-const c out))
+     (serialize-usize (foldl + 0 (map instr-len k*)) out)
+     (for ([k k*]) (Cont k))])
 
-  (Cont : Cont (ir instr-acc) -> * ()
+  (Cont : Cont (ir) -> * ()
     [(cont ([,n* ,i*] ...) ,s* ... ,t)
-     (for-each (cute Stmt <> instr-acc) s*)
-     (Transfer t instr-acc)])
+     (for ([stmt s*]) (Stmt stmt))
+     (when t (Transfer t))])
 
-  (Stmt : Stmt (ir instr-acc) -> * ()
-    [(def (,n ,i) ,e) (Expr e i instr-acc)]
-    [,e (Expr e #f instr-acc)])
+  (Stmt : Stmt (ir) -> * ()
+    [(def (,n ,i) ,e) (Expr e i)]
+    [,e (Expr e #f)])
 
-  (Expr : Expr (ir dest-reg instr-acc) -> * ()
-    [(primcall0 ,p)             (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg))]
-    [(primcall1 ,p ,a)          (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a))]
-    [(primcall2 ,p ,a1 ,a2)     (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a1 a2))]
-    [(primcall3 ,p ,a1 ,a2 ,a3) (gvector-add! instr-acc (bytecode:encode-stmt p dest-reg a1 a2 a3))]
-    [,a                         (gvector-add! instr-acc (bytecode:encode-stmt '__mov dest-reg a))])
+  (Expr : Expr (ir dest-reg) -> * ()
+    [(primcall0 ,p)             (serialize-instr (bytecode:encode-stmt p dest-reg) out)]
+    [(primcall1 ,p ,a)          (serialize-instr (bytecode:encode-stmt p dest-reg a) out)]
+    [(primcall2 ,p ,a1 ,a2)     (serialize-instr (bytecode:encode-stmt p dest-reg a1 a2) out)]
+    [(primcall3 ,p ,a1 ,a2 ,a3) (serialize-instr (bytecode:encode-stmt p dest-reg a1 a2 a3) out)]
+    [,a                         (serialize-instr (bytecode:encode-stmt '__mov dest-reg a) out)])
 
-  (Transfer : Transfer (ir instr-acc) -> * ()
-    [(br ,n ,i) (guard (not n)) (void)]
-    [(br ,n ,i)      (gvector-add! instr-acc (bytecode:encode-transfer '__br i))]
-    [(jmp ,x)        (gvector-add! instr-acc (bytecode:encode-transfer '__jmp x))]
-    [(brf ,a? ,n ,i) (gvector-add! instr-acc (bytecode:encode-transfer '__brf a? i))]
-    [(halt ,a)       (gvector-add! instr-acc (bytecode:encode-transfer '__halt a))]))
+  (Transfer : Transfer (ir) -> * ()
+    [(br ,n ,i)      (serialize-instr (bytecode:encode-transfer '__br i) out)]
+    [(jmp ,x)        (serialize-instr (bytecode:encode-transfer '__jmp x) out)]
+    [(brf ,a? ,n ,i) (serialize-instr (bytecode:encode-transfer '__brf a? i) out)]
+    [(halt ,a)       (serialize-instr (bytecode:encode-transfer '__halt a) out)]))
