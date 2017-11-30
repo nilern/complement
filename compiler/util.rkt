@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by
-         while if-let-values when-let-values while-let-values)
+         while when-let if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
 (struct exn:unbound exn:fail ())
@@ -39,6 +39,14 @@
          stmts ...
          (loop)))]))
 
+(define-syntax when-let
+  (syntax-rules ()
+    [(when-let (name condition)
+       stmts ...)
+     (let ([name condition])
+       (when name
+         stmts ...))]))
+
 (define-syntax if-let-values
   (syntax-rules ()
     [(if-let-values [(name names ...) prod]
@@ -48,7 +56,7 @@
        (if name
          then
          otherwise))]))
-         
+
 (define-syntax when-let-values
   (syntax-rules ()
     [(when-let-values [(name names ...) prod]
@@ -56,7 +64,7 @@
      (let-values ([(name names ...) prod])
        (when name
          stmts ...))]))
-         
+
 (define-syntax while-let-values
   (syntax-rules ()
     [(while-let-values [(name names ...) prod]
