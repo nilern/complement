@@ -3,8 +3,10 @@
 (provide select-instructions shrink)
 (require racket/match racket/list racket/set data/gvector (only-in srfi/26 cute)
          nanopass/base
-         "../langs.rkt" (prefix-in cfg: "../cfg.rkt")
-         (prefix-in kenv: (submod "../util.rkt" cont-env)))
+
+         (only-in "../util.rkt" zip-hash)
+         "../langs.rkt"
+         (prefix-in cfg: "../cfg.rkt"))
 
 ;; Bidirectional direct-call graph of a CFG
 (module label-table racket/base
@@ -144,9 +146,9 @@
   (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (hash-ref ltabs name))
-     (define kenv (kenv:inject n1* k*))
+     (define kenv (zip-hash n1* k*))
      (for ([label (cfg:reverse-postorder ltab n2*)])
-       (Cont (kenv:ref kenv label) label ltab))
+       (Cont (hash-ref kenv label) label ltab))
      (define-values (rlabels rconts)
        (with-output-language (CPCPS Cont)
          (for/fold ([labels '()] [conts '()])

@@ -4,8 +4,7 @@
 (require racket/match racket/set data/gvector (only-in srfi/26 cute) (only-in threading ~> ~>>)
          nanopass/base
          "../langs.rkt" (prefix-in cfg: "../cfg.rkt")
-         (only-in "../util.rkt" clj-group-by unzip-hash)
-         (prefix-in kenv: (submod "../util.rkt" cont-env)))
+         (only-in "../util.rkt" clj-group-by zip-hash unzip-hash))
 
 ;; TODO: use this in shrinking
 (define-pass census! : CPS (ir delta ltab vtab) -> * ()
@@ -122,9 +121,9 @@
 
   (CFG : CFG (ir) -> CFG ()
     [(cfg ([,n* ,k*] ...) ,n)
-     (define kenv (kenv:inject n* k*))
+     (define kenv (zip-hash n* k*))
      (define cfg-builder (make-cfg-builder n))
-     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (Cont (hash-ref kenv n) n kenv cfg-builder)
      (build-cfg cfg-builder)])
 
   (Cont : Cont (ir label kenv cfg-builder) -> Cont ()
@@ -178,19 +177,19 @@
   (Var : Var (ir kenv cfg-builder) -> Atom ()
     [(lex ,n) ir]
     [(label ,n)
-     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (Cont (hash-ref kenv n) n kenv cfg-builder)
      `(label ,(label-ref cfg-builder n 'escape))])
 
   (Callee : Var (ir kenv cfg-builder) -> Var ()
     [(lex ,n) ir]
     [(label ,n)
-     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (Cont (hash-ref kenv n) n kenv cfg-builder)
      `(label ,(label-ref cfg-builder n 'default))])
 
   (IfCallee : Var (ir kenv cfg-builder) -> Var ()
     [(lex ,n) ir]
     [(label ,n)
-     (Cont (kenv:ref kenv n) n kenv cfg-builder)
+     (Cont (hash-ref kenv n) n kenv cfg-builder)
      (if (> (hash-ref (hash-ref ltab n) 'calls) 1)
        (begin
          (add-cont! cfg-builder n 'critical
@@ -258,8 +257,8 @@
 
   (CFG : CFG (ir stats visited) -> * ()
     [(cfg ([,n* ,k*] ...) ,n)
-     (define kenv (kenv:inject n* k*))
-     (Cont (kenv:ref kenv n) n kenv stats visited)])
+     (define kenv (zip-hash n* k*))
+     (Cont (hash-ref kenv n) n kenv stats visited)])
 
   (Cont : Cont (ir label kenv stats visited) -> * ()
     [(cont (,n* ...) ,s* ... ,t)
@@ -311,7 +310,7 @@
   (Var : Var (ir call? label env kenv stats visited) -> * ()
     [(lex ,n) (unless (set-member? env n) (use-clover! stats label n))]
     [(label ,n)
-     (Cont (kenv:ref kenv n) n kenv stats visited)
+     (Cont (hash-ref kenv n) n kenv stats visited)
      (transitively! stats label env n)])
 
   (let ([visited (mutable-set)]
@@ -362,12 +361,12 @@
        (filter (lambda (label) (> (hash-ref (hash-ref ltab label) 'escapes) 0)) n*))
      (define rpo (cfg:reverse-postorder cfg-edges entries))
      (define dom-forest (cfg:dominator-forest cfg-edges rpo entries))
-     (define kenv (kenv:inject n* k*))
+     (define kenv (zip-hash n* k*))
      (define cont-acc (make-cont-acc n))
      (for ([entry entries])
        (let loop ([dom-tree (hash-ref dom-forest entry)] [env (hash)])
          (match-define (cons label children) dom-tree)
-         (define env* (Cont (kenv:ref kenv label) label (eq? label n) env fn-acc cont-acc))
+         (define env* (Cont (hash-ref kenv label) label (eq? label n) env fn-acc cont-acc))
          (for ([child children])
            (loop child env*))))
      (build-cfg cont-acc)])

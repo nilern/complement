@@ -3,9 +3,10 @@
 (provide eval-CPCPS)
 (require racket/match racket/undefined (only-in racket/hash hash-union) (only-in srfi/26 cute)
          nanopass/base
+
+         (only-in "../util.rkt" zip-hash)
          "../langs.rkt" (prefix-in primops: "../primops.rkt")
-         (prefix-in env: (submod "cps.rkt" env))
-         (prefix-in kenv: (submod "../util.rkt" cont-env)))
+         (prefix-in env: (submod "cps.rkt" env)))
 
 ;;;; Values
 
@@ -28,9 +29,9 @@
         ['() (Transfer transfer curr-fn env kenv fenv rfenv)]))
 
     (define (goto k curr-fn env kenv fenv rfenv args)
-      (nanopass-case (CPCPS Cont) (kenv:ref kenv k)
+      (nanopass-case (CPCPS Cont) (hash-ref kenv k)
         [(cont (,n* ...) ,s* ... ,t)
-         (define next-fn (kenv:ref rfenv k))
+         (define next-fn (hash-ref rfenv k))
          (define env* (if (eq? next-fn curr-fn)
                         (env:push-args env n* args)
                         (for/hash ([name n*] [arg args]) (values name arg))))
@@ -41,7 +42,7 @@
         (λ (fenv op args)
           (match* (op args)
             [('__fnNew (cons fn freevars)) (value:$fn fn (list->vector freevars))]
-            [('__fnCode (list (value:$fn code _))) (kenv:ref fenv code)]
+            [('__fnCode (list (value:$fn code _))) (hash-ref fenv code)]
             [('__fnGet (list (value:$fn _ freevars) i)) (vector-ref freevars i)]
             [('__contNew (cons cont freevars)) (value:$cont cont (list->vector freevars))]
             [('__contCode (list (value:$cont code _))) code]
@@ -58,7 +59,7 @@
          (nanopass-case (CPCPS CFG) fn-cfg
            [(cfg ([,n1* ,k*] ...) (,n2* ...))
             (define entry (car n2*))
-            (values (hash-union kenv (kenv:inject n1* k*))
+            (values (hash-union kenv (zip-hash n1* k*))
                     (hash-set fenv name entry)
                     (for/fold ([rfenv rfenv])
                               ([label n1*])

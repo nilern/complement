@@ -11,7 +11,6 @@
          nanopass/base
 
          (rename-in "../langs.rkt" (InstrCPCPS-Atom=? atom=?) (InstrCPCPS-Atom-hash hash-atom))
-         (prefix-in kenv: (submod "../util.rkt" cont-env))
          (prefix-in cfg: "../cfg.rkt")
          (only-in "../util.rkt" zip-hash unzip-hash when-let-values while-let-values))
 
@@ -48,10 +47,10 @@
 
   (CFG : CFG (ir) -> * ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
-     (define kenv (kenv:inject n1* k*))
+     (define kenv (zip-hash n1* k*))
      (define cont-acc (make-hash))
      (for ([name n2*])
-       (Cont (kenv:ref kenv name) name kenv cont-acc))
+       (Cont (hash-ref kenv name) name kenv cont-acc))
      cont-acc])
 
   (Cont : Cont (ir name kenv cont-acc) -> * ()
@@ -113,7 +112,7 @@
   (Callee : Var (ir kenv cont-acc) -> * ()
     [(lex ,n) (set)]
     [(label ,n)
-     (Cont (kenv:ref kenv n) n kenv cont-acc)
+     (Cont (hash-ref kenv n) n kenv cont-acc)
      (hash-ref (hash-ref cont-acc n) 'freevars)]
     [(proc ,n) (set)])
 
@@ -178,12 +177,12 @@
      (define liveness (cfg-liveness ir))
      (hash-set! livenesses name liveness)
      (define env (make-hash))
-     (define kenv (kenv:inject n1* k*))
+     (define kenv (zip-hash n1* k*))
      (define cont-acc (make-hash))
      (for ([entry n2*])
        (let loop ([dom-tree (hash-ref dom-forest entry)])
          (match-define (cons label children) dom-tree)
-         (Cont (kenv:ref kenv label) label env ltab liveness cont-acc)
+         (Cont (hash-ref kenv label) label env ltab liveness cont-acc)
          (for ([child children])
            (loop child))))
      (define-values (labels conts) (unzip-hash cont-acc))

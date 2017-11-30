@@ -3,8 +3,7 @@
 (provide eval-CPS)
 (require racket/match racket/hash racket/undefined (only-in srfi/26 cute)
          nanopass/base
-         "../util.rkt" "../langs.rkt" (prefix-in primops: "../primops.rkt")
-         (prefix-in kenv: (submod "../util.rkt" cont-env)))
+         "../util.rkt" "../langs.rkt" (prefix-in primops: "../primops.rkt"))
 
 ;;;; Values
 
@@ -61,16 +60,16 @@
 
     (define (apply-fn f args)
       (match-let* ([(value:$fn labels conts entry env) f]
-                   [kenv (kenv:inject labels conts)])
-        (apply-label (kenv:ref kenv entry) env kenv args)))
+                   [kenv (zip-hash labels conts)])
+        (apply-label (hash-ref kenv entry) env kenv args)))
 
     (define primapply (primops:primapply (hash-union primops:base-ops primops:denv-ops))))
 
   (CFG : CFG (ir) -> * ()
     [(cfg ([,n* ,k*] ...) ,n)
      (define env (env:empty))
-     (define kenv (kenv:inject n* k*))
-     (apply-label (kenv:ref kenv n) env kenv '())])
+     (define kenv (zip-hash n* k*))
+     (apply-label (hash-ref kenv n) env kenv '())])
 
   (Stmt : Stmt (ir env kenv stmts transfer) -> * ()
     [(def ,n ,e) (Expr e env kenv n stmts transfer)]
@@ -107,4 +106,4 @@
 
   (Var : Var (ir env kenv) -> * ()
     [(lex ,n) (env:ref env n)]
-    [(label ,n) (value:$cont (kenv:ref kenv n) env)]))
+    [(label ,n) (value:$cont (hash-ref kenv n) env)]))
