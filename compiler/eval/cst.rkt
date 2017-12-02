@@ -2,23 +2,30 @@
 
 (provide eval-Cst)
 
-(require racket/undefined racket/match (only-in srfi/26 cute)
+(require racket/undefined
+         (only-in racket/list filter-map)
+         racket/match
+         (only-in srfi/26 cute)
+         (only-in threading ~>)
          nanopass/base
-         "../langs.rkt" (prefix-in primops: "../primops.rkt"))
+
+         (only-in "../util.rkt" zip-hash)
+         "../langs.rkt"
+         (prefix-in primops: "../primops.rkt"))
 
 ;;;; Value
 
 (module value racket/base
-  (provide $fn)
+  (provide $closure)
 
-  (struct $fn (cases lenv)))
+  (struct $closure (cases lenv)))
 
 ;;;; Continuations
 
 (module cont racket/base
-  (provide $fn $args $precond $primargs $block $def $halt)
+  (provide $closure $args $precond $primargs $block $def $halt)
 
-  (struct $fn (cont lenv denv arges) #:transparent)
+  (struct $closure (cont lenv denv arges) #:transparent)
   (struct $args (cont lenv denv arges f argvs) #:transparent)
   (struct $precond (cont lenv denv body f* args) #:transparent)
   (struct $primargs (cont lenv denv arges op argvs) #:transparent)
@@ -29,22 +36,13 @@
 ;;;; Environments
 
 (module env racket/base
-  (provide empty push-block push-fn ref)
-  (require racket/undefined racket/match)
-
-  (struct $env (bindings parent) #:transparent)
+  (provide empty push-frame ref)
+  (require (only-in racket/hash hash-union))
 
   (define (empty) (hash))
 
-  (define (push-fn parent bindings)
-    (for/fold ([env parent])
-              ([binding bindings])
-      (hash-set env (car binding) (cdr binding))))
-
-  (define (push-block parent binders)
-    (for/fold ([env parent])
-              ([binder binders])
-      (hash-set env binder (box undefined))))
+  (define (push-frame parent frame)
+    (hash-union parent frame #:combine (lambda (_ v) v)))
 
   (define ref hash-ref))
 
@@ -56,115 +54,107 @@
 
 (define-pass eval-Cst : Cst (ir) -> * ()
   (definitions
+    (define (make-box) (box undefined))
+
+    (define/match (force-box _)
+      [((box v)) (force-box v)]
+      [(v) v])
+
+    (define (var-tag x)
+      (nanopass-case (Cst Var) x
+        [(lex ,n) 'lex]
+        [(dyn ,n) 'dyn]))
+
+    (define (var-name x)
+      (nanopass-case (Cst Var) x
+        [(lex ,n) n]
+        [(dyn ,n) n]))
+
     (define (block-binders stmts)
-      (define (stmt-binders stmt)
-        (nanopass-case (Cst Stmt) stmt
-          [(def (lex ,n) ,e) (values (list n) '())]
-          [(def (dyn ,n) ,e) (values '() (list n))]
-          [,e (values '() '())]))
+      (filter-map (lambda (stmt)
+                    (nanopass-case (Cst Stmt) stmt
+                      [(def ,x ,e) x]
+                      [,e #f]))
+                  stmts))
 
-      (for/fold ([lbs '()] [dbs '()])
-                ([stmt stmts])
-        (define-values (slbs sdbs) (stmt-binders stmt))
-        (values (append slbs lbs) (append sdbs dbs))))
+    (define (partition-bindings bindings)
+      (define (filter-bindings tag bindings)
+        (for/hash ([(x v) bindings] #:when (eq? (var-tag x) tag))
+          (values (var-name x) v)))
+      (values (filter-bindings 'lex bindings)
+              (filter-bindings 'dyn bindings)))
 
-    (define (fn-binders params args)
-      (define (param-binders param arg)
-        (nanopass-case (Cst Var) param
-          [(lex ,n) (values (list (cons n arg)) '())]
-          [(dyn ,n) (values '() (list (cons n arg)))]))
+    (define (block-frames stmts)
+      (~> (block-binders stmts)
+          (zip-hash (in-producer make-box))
+          partition-bindings))
 
-      (define-values (lbs dbs)
-        (for/fold ([lbs '()] [dbs '()])
-                  ([param params]
-                   [arg args])
-          (define-values (plbs pdbs) (param-binders param arg))
-          (values (append plbs lbs) (append pdbs dbs))))
-      (values (reverse lbs) (reverse dbs)))
+    (define (case-frames params args)
+      (partition-bindings (zip-hash params args)))
 
     (define (lookup lenv denv var)
       (nanopass-case (Cst Var) var
         [(lex ,n) (env:ref lenv n)]
         [(dyn ,n) (env:ref denv n)]))
 
-    (define (continue cont value)
-      (match cont
-        [(cont:$fn cont* lenv denv (cons arge arges))
-         (define cont** (cont:$args cont* lenv denv arges value '()))
-         (Expr arge cont** lenv denv)]
-        [(cont:$fn cont* _ denv '())
-         (apply cont* denv value '())]
+    (define primapply (primops:primapply primops:base-ops))
 
-        [(cont:$args cont* lenv denv (cons arge arges) f argvs)
-         (define cont** (cont:$args cont* lenv denv arges f (cons value argvs)))
-         (Expr arge cont** lenv denv)]
-        [(cont:$args cont* _ denv '() f argvs)
-         (apply cont* denv f (reverse (cons value argvs)))]
+    (define/match (apply _ _* _** _***)
+      [((value:$closure (cons case cases) lenv) args cont denv)
+       (nanopass-case (Cst Case) case
+         [(case (,x* ...) ,e? ,e)
+          (if (eqv? (length x*) (length args))
+            (let-values ([(lbs dbs) (case-frames x* args)])
+              (let ([lenv* (env:push-frame lenv lbs)]
+                    [denv* (env:push-frame denv dbs)])
+                (Expr e?
+                      (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args)
+                      lenv* denv*)))
+            (apply (value:$closure cases lenv) args cont denv))])]
+      [('() _ _ _) (error "No such method")])
 
-        [(cont:$precond cont* lenv denv body f* args)
-         (match value
-           [#t (Expr body cont* lenv denv)]
-           [#f (apply cont* denv f* args)])]
+    (define/match (continue _ _*)
+      [((cont:$closure cont lenv denv (cons arge arges)) f)
+       (Expr arge (cont:$args cont lenv denv arges f '()) lenv denv)]
+      [((cont:$closure cont _ denv '()) value) (apply value '() cont denv)]
 
-        [(cont:$primargs cont* lenv denv (cons arge arges) op argvs)
-         (define cont** (cont:$primargs cont* lenv denv arges op (cons value argvs)))
-         (Expr arge cont** lenv denv)]
-        [(cont:$primargs cont* _ _ '() op argvs)
-         (continue cont* (primapply op (reverse (cons value argvs))))]
+      [((cont:$args cont lenv denv (cons arge arges) f argvs) value)
+       (Expr arge (cont:$args cont lenv denv arges f (cons value argvs)) lenv denv)]
+      [((cont:$args cont _ denv '() f argvs) value)
+       (apply f (reverse (cons value argvs)) cont denv)]
 
-        [(cont:$block cont* lenv denv '() e)
-         (Expr e cont* lenv denv)]
-        [(cont:$block cont* lenv denv (cons s s*) e)
-         (Stmt s (cont:$block cont* lenv denv s* e) lenv denv)]
+      [((cont:$precond cont lenv denv body f* args) #t) (Expr body cont lenv denv)]
+      [((cont:$precond cont lenv denv body f* args) #f) (apply f* args cont denv)]
 
-        [(cont:$def cont* lenv denv var)
-         (set-box! (lookup lenv denv var) value)
-         (continue cont* value)] ; `value` is arbitrary here, it won't be used
+      [((cont:$primargs cont lenv denv (cons arge arges) op argvs) value)
+       (Expr arge (cont:$primargs cont lenv denv arges op (cons value argvs)) lenv denv)]
+      [((cont:$primargs cont _ _ '() op argvs) value)
+       (continue cont (primapply op (reverse (cons value argvs))))]
 
-        [(cont:$halt) value]))
+      [((cont:$block cont lenv denv '() e) _) (Expr e cont lenv denv)]
+      [((cont:$block cont lenv denv (cons s s*) e) _)
+       (Stmt s (cont:$block cont lenv denv s* e) lenv denv)]
 
-    (define (apply cont denv f args)
-      (define (accepts? argc case)
-        (nanopass-case (Cst Case) case
-          [(case (,x* ...) ,e? ,e) (= (length x*) argc)]))
+      [((cont:$def cont lenv denv var) value)
+       (set-box! (lookup lenv denv var) value)
+       (continue cont value)] ; `value` is arbitrary here, it won't be used
 
-      (match-define (value:$fn cases lenv) f)
-      (match (filter (cute accepts? (length args) <>) cases)
-        [(cons case cases)
-         (nanopass-case (Cst Case) case
-           [(case (,x* ...) ,e? ,e)
-            (let*-values ([(lbs dbs) (fn-binders x* args)]
-                          [(lenv*) (env:push-fn lenv lbs)]
-                          [(denv*) (env:push-fn denv dbs)]
-                          [(f*) (value:$fn cases lenv)]
-                          [(cont*) (cont:$precond cont lenv* denv* e f* args)])
-              (Expr e? cont* lenv* denv*))])]
-        ['() (error "argc")]))
-
-    (define primapply (primops:primapply primops:base-ops)))
+      [((cont:$halt) value) value]))
 
   (Expr : Expr (expr cont lenv denv) -> * ()
-    [(fn ,fc* ...) (continue cont (value:$fn fc* lenv ))]
-    [(call ,e ,e* ...)
-     (define cont* (cont:$fn cont lenv denv e*))
-     (Expr e cont* lenv denv)]
+    [(fn ,fc* ...) (continue cont (value:$closure fc* lenv ))]
+    [(call ,e ,e* ...) (Expr e (cont:$closure cont lenv denv e*) lenv denv)]
+    [(primcall ,p) (continue cont (primapply p '()))]
     [(primcall ,p ,e* ...)
-     (match e*
-       [(cons arge arges)
-        (define cont* (cont:$primargs cont lenv denv arges p '()))
-        (Expr arge cont* lenv denv)]
-       ['() (continue cont (primapply p '()))])]
+     (Expr (car e*) (cont:$primargs cont lenv denv (cdr e*) p '()) lenv denv)]
     [(block ,e) (Expr e cont lenv denv)]
     [(block ,s* ... ,e)
-     (let*-values ([(lbs dbs) (block-binders s*)]
-                   [(lenv*) (env:push-block lenv lbs)]
-                   [(denv*) (env:push-block denv dbs)]
-                   [(cont*) (cont:$block cont lenv* denv* (cdr s*) e)])
-       (Stmt (car s*) cont* lenv* denv*))]
+     (define-values (lbs dbs) (block-frames s*))
+     (let ([lenv* (env:push-frame lenv lbs)]
+           [denv* (env:push-frame denv dbs)])
+       (Stmt (car s*) (cont:$block cont lenv* denv* (cdr s*) e) lenv* denv*))]
     [(const ,c) (continue cont c)]
-    [,x (continue cont (match (lookup lenv denv x)
-                         [(box val) val]
-                         [val val]))])
+    [,x (continue cont (force-box (lookup lenv denv x)))])
 
   (Stmt : Stmt (stmt cont lenv denv) -> * ()
     [(def ,x ,e) (Expr e (cont:$def cont lenv denv x) lenv denv)]
