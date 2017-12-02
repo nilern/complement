@@ -6,6 +6,7 @@
          Asm ResolvedAsm ConstPoolAsm)
 (require nanopass/base)
 
+;;; TODO: Make primcalls "correct by construction"
 ;;; TODO: restrict (call e e* ...)
 
 (define (name? name)
