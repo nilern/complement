@@ -102,15 +102,15 @@
     (define/match (apply _ _* _** _***)
       [((value:$closure (cons case cases) lenv) args cont denv)
        (nanopass-case (Cst Case) case
+         [(case (,x* ...) ,e? ,e) (guard (eqv? (length x*) (length args)))
+          (let-values ([(lbs dbs) (case-frames x* args)])
+            (let ([lenv* (env:push-frame lenv lbs)]
+                  [denv* (env:push-frame denv dbs)])
+              (Expr e?
+                    (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args)
+                    lenv* denv*)))]
          [(case (,x* ...) ,e? ,e)
-          (if (eqv? (length x*) (length args))
-            (let-values ([(lbs dbs) (case-frames x* args)])
-              (let ([lenv* (env:push-frame lenv lbs)]
-                    [denv* (env:push-frame denv dbs)])
-                (Expr e?
-                      (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args)
-                      lenv* denv*)))
-            (apply (value:$closure cases lenv) args cont denv))])]
+          (apply (value:$closure cases lenv) args cont denv)])]
       [((value:$closure '() lenv) _ _ _) (error "No such method")])
 
     (define/match (continue _ _*)
