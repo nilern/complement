@@ -57,7 +57,7 @@
     (define (make-box) (box undefined))
 
     (define/match (force-box _)
-      [((box v)) (force-box v)]
+      [((box v)) (if (equal? v undefined) (error "Uninitialized variable") v)]
       [(v) v])
 
     (define (var-tag x)
@@ -111,7 +111,7 @@
                       (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args)
                       lenv* denv*)))
             (apply (value:$closure cases lenv) args cont denv))])]
-      [('() _ _ _) (error "No such method")])
+      [((value:$closure '() lenv) _ _ _) (error "No such method")])
 
     (define/match (continue _ _*)
       [((cont:$closure cont lenv denv (cons arge arges)) f)
