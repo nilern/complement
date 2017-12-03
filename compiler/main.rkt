@@ -33,7 +33,7 @@
       ;; TODO: Fill out missing syntax:
       'parse             (pass '() (lambda () (parse input)) eval-Cst)
       'alphatize         (pass '(parse) cst:alphatize eval-Cst)
-      'lex-straighten    (pass '(alphatize) cst:lex-straighten #f)
+      'lex-straighten    (pass '(alphatize) cst:lex-straighten eval-Cst)
       'introduce-dyn-env (pass '(lex-straighten) cst:introduce-dyn-env #f)
       'add-dispatch      (pass '(introduce-dyn-env) cst:add-dispatch #f)
 
@@ -51,7 +51,7 @@
                                                         (hash-ref census-tables 'label-table)))
                               eval-CPCPS)
       'cpcps-label-table   (pass '(closure-convert) ltab:make #f)
-      'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps:shrink #f)
+      'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps:shrink eval-CPCPS)
 
       'select-instructions (pass '(cpcps-shrink) cpcps:select-instructions #f)
       'allocate-registers  (pass '(select-instructions cpcps-label-table) allocate-registers #f)
