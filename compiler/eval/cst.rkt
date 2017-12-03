@@ -27,7 +27,7 @@
 
   (struct $closure (cont lenv denv arges) #:transparent)
   (struct $args (cont lenv denv arges f argvs) #:transparent)
-  (struct $precond (cont lenv denv body f* args) #:transparent)
+  (struct $precond (cont lenv denv* body f* args denv) #:transparent)
   (struct $primargs (cont lenv denv arges op argvs) #:transparent)
   (struct $block (cont lenv denv stmts expr) #:transparent)
   (struct $def (cont lenv denv var) #:transparent)
@@ -107,7 +107,7 @@
             (let ([lenv* (env:push-frame lenv lbs)]
                   [denv* (env:push-frame denv dbs)])
               (Expr e?
-                    (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args)
+                    (cont:$precond cont lenv* denv* e (value:$closure cases lenv) args denv)
                     lenv* denv*)))]
          [(case (,x* ...) ,e? ,e)
           (apply (value:$closure cases lenv) args cont denv)])]
@@ -123,8 +123,8 @@
       [((cont:$args cont _ denv '() f argvs) value)
        (apply f (reverse (cons value argvs)) cont denv)]
 
-      [((cont:$precond cont lenv denv body f* args) #t) (Expr body cont lenv denv)]
-      [((cont:$precond cont lenv denv body f* args) #f) (apply f* args cont denv)]
+      [((cont:$precond cont lenv denv body _ _ _) #t) (Expr body cont lenv denv)]
+      [((cont:$precond cont _ _ _ f* args denv) #f) (apply f* args cont denv)]
 
       [((cont:$primargs cont lenv denv (cons arge arges) op argvs) value)
        (Expr arge (cont:$primargs cont lenv denv arges op (cons value argvs)) lenv denv)]
