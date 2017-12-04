@@ -16,7 +16,7 @@
 (define-empty-tokens empty-toks
   (EOF
    LPAREN RPAREN LBRACE RBRACE
-   SEMICOLON
+   COMMA SEMICOLON
    = => \|))
 
 (define-lex-abbrevs
@@ -38,6 +38,7 @@
     [")" 'RPAREN]
     ["{" 'LBRACE]
     ["}" 'RBRACE]
+    ["," 'COMMA]
     [";" 'SEMICOLON]
     ["=>" '=>]
     ["=" '=]
@@ -212,12 +213,23 @@
         [(LPAREN OP7 RPAREN) (with-output-language (Cst Var) `(lex ,$2))])
 
       (datum
+        [(LPAREN expr-list RPAREN)
+         (with-output-language (Cst Expr) `(primcall __tupleNew ,(reverse $2) ...))]
         [(datom) (with-output-language (Cst Expr) `(const ,$1))])
 
       (datom
         [(INT) $1]
         [(CHAR) $1]
-        [(STRING) $1]))))
+        [(STRING) $1])
+
+      (expr-list
+        [() '()]
+        [(expr COMMA) (list $1)]
+        [(expr-list-2+) $1])
+
+      (expr-list-2+
+        [(expr COMMA expr) (list $3 $1)]
+        [(expr-list-2+ COMMA expr) (cons $3 $1)]))))
 
 (define (parse ip)
   (parse-expr (λ () (lex ip))))
