@@ -110,6 +110,10 @@
   (define-values (stmts expr) (extract decls))
   (with-output-language (Cst Expr) `(block ,stmts ... ,expr)))
 
+(define (binapp l op r)
+  (with-output-language (Cst Expr)
+    `(call (lex ,op) ,l ,r)))
+
 (define parse-expr
   (parser
     (src-pos)
@@ -139,25 +143,25 @@
       (expr [(infix1) $1])
 
       (infix1
-        [(infix1 OP1 infix2) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix1 OP1 infix2) (binapp $1 $2 $3)]
         [(infix2) $1])
       (infix2
-        [(infix2 OP2 infix3) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix2 OP2 infix3) (binapp $1 $2 $3)]
         [(infix3) $1])
       (infix3
-        [(infix3 OP3 infix4) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix3 OP3 infix4) (binapp $1 $2 $3)]
         [(infix4) $1])
       (infix4
-        [(infix4 OP4 infix5) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix4 OP4 infix5) (binapp $1 $2 $3)]
         [(infix5) $1])
       (infix5
-        [(infix5 OP5 infix6) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix5 OP5 infix6) (binapp $1 $2 $3)]
         [(infix6) $1])
       (infix6
-        [(infix6 OP6 infix7) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix6 OP6 infix7) (binapp $1 $2 $3)]
         [(infix7) $1])
       (infix7
-        [(infix7 OP7 app-expr) (with-output-language (Cst Expr) `(call (lex ,$2) ,$1 ,$3))]
+        [(infix7 OP7 app-expr) (binapp $1 $2 $3)]
         [(app-expr) $1])
 
       (app-expr
