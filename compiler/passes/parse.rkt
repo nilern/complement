@@ -113,7 +113,7 @@
 (define parse-expr
   (parser
     (src-pos)
-    (start block)
+    (start program)
     (end EOF)
     (tokens payload-toks empty-toks)
     (error (λ (tok-ok? tok-name tok-value start end)
@@ -121,19 +121,16 @@
                      (list tok-ok? tok-name tok-value start end))))
 
     (grammar
-      (block
-        [(block-decl-list) (parse-decls (reverse $1))])
+      (program
+        [(body) $1])
 
-      (block-decl-list
-        [(block-decl) (list $1)]
-        [(block-decl-list SEMICOLON block-decl) (cons $3 $1)])
+      (body
+        [(stmt-list SEMICOLON expr) (extract-block (foldl cons (list $3) $1))]
+        [(expr) (extract-block (list $1))])
 
-      (block-decl
-        [(app => stmt) ($fn-header (app->var-list (reverse $1))
-                                   (with-output-language (Cst Expr) `(const #t))
-                                   $3)]
-        [(app \| expr => stmt) ($fn-header (app->var-list (reverse $1)) $3 $5)]
-        [(stmt) $1])
+      (stmt-list
+        [(stmt-list SEMICOLON stmt) (cons $3 $1)]
+        [(stmt) (list $1)])
 
       (stmt
         [(var = expr) ($def $1 $3)]
@@ -184,6 +181,20 @@
         [(LBRACE block RBRACE) $2]
         [(var) $1]
         [(datum) $1])
+        
+      (block
+        [(block-decl-list) (parse-decls (reverse $1))])
+
+      (block-decl-list
+        [(block-decl) (list $1)]
+        [(block-decl-list SEMICOLON block-decl) (cons $3 $1)])
+
+      (block-decl
+        [(app => stmt) ($fn-header (app->var-list (reverse $1))
+                                   (with-output-language (Cst Expr) `(const #t))
+                                   $3)]
+        [(app \| expr => stmt) ($fn-header (app->var-list (reverse $1)) $3 $5)]
+        [(stmt) $1])
 
       (var
         [(LEX)               (with-output-language (Cst Var) `(lex ,$1))]
