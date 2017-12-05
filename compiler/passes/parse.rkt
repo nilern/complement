@@ -19,7 +19,7 @@
    INT CHAR))
 (define-empty-tokens empty-toks
   (EOF
-   LPAREN RPAREN LBRACE RBRACE
+   LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
    COMMA SEMICOLON
    = => \|))
 
@@ -40,6 +40,8 @@
     [(eof) 'EOF]
     ["(" 'LPAREN]
     [")" 'RPAREN]
+    ["[" 'LBRACKET]
+    ["]" 'RBRACKET]
     ["{" 'LBRACE]
     ["}" 'RBRACE]
     ["," 'COMMA]
@@ -197,6 +199,9 @@
       (simple
         [(LPAREN expr RPAREN) $2]
         [(LBRACE block RBRACE) $2]
+        [(LBRACKET body RBRACKET)
+         (with-output-language (Cst Expr)
+           `(fn (case () (const #t) ,$2)))]
         [(var) $1]
         [(datum) $1])
 
