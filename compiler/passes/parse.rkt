@@ -1,6 +1,9 @@
 #lang racket/base
 
-(require racket/match racket/list (only-in racket/function negate)
+(provide parse)
+(require racket/match
+         racket/list
+         (only-in racket/function negate)
          parser-tools/lex
          (prefix-in : parser-tools/lex-sre)
          parser-tools/yacc
@@ -8,10 +11,11 @@
 
          "../langs.rkt")
 
-(provide parse)
+;;;; # Lexer
 
 (define-tokens payload-toks
-  (LEX DYN OP1 OP2 OP3 OP4 OP5 OP6 OP7 PRIMOP STRING
+  (LEX DYN OP1 OP2 OP3 OP4 OP5 OP6 OP7 PRIMOP
+   STRING
    INT CHAR))
 (define-empty-tokens empty-toks
   (EOF
@@ -71,12 +75,18 @@
      (token-LEX (string->symbol lexeme))]
     [(:+ digit) (token-INT (string->number lexeme))]))
 
+;;;; # Parser
+
+;;; First, some hacks around LR limitations:
+
 (struct $fn-header (params cond body-start))
 (struct $def (var expr))
 
 (define (app->var-list app)
-  (map (λ (expr) (nanopass-case (Cst Expr) expr [,x x]))
-       app))
+  (define (unwrap-var-expr expr)
+    (nanopass-case (Cst Expr) expr
+      [,x x]))
+  (map unwrap-var-expr app))
 
 (define (parse-decls decls)
   (if ($fn-header? (car decls))
@@ -97,19 +107,22 @@
     (extract-block decls)))
 
 (define (extract-block decls)
-  (define extract
-    (match-lambda
-      [(list (and (not (? $fn-header?) (? $def?)) expr))
-       (values '() expr)]
-      [(cons ($def var expr) decls)
-       (define stmt (with-output-language (Cst Stmt) `(def ,var ,expr)))
-       (define-values (stmts expr*) (extract decls))
-       (values (cons stmt stmts) expr*)]
-      [(cons (and (not (? $fn-header?)) stmt) decls)
-       (define-values (stmts expr) (extract decls))
-       (values (cons stmt stmts) expr)]))
-  (define-values (stmts expr) (extract decls))
-  (with-output-language (Cst Expr) `(block ,stmts ... ,expr)))
+  (let-values ([(stmts expr)
+                (let extract ([decls decls])
+                  (match decls
+                    [(list (and (not (? $fn-header?) (? $def?)) expr))
+                     (values '() expr)]
+                    [(cons ($def var expr) decls)
+                     (define stmt (with-output-language (Cst Stmt) `(def ,var ,expr)))
+                     (define-values (stmts expr*) (extract decls))
+                     (values (cons stmt stmts) expr*)]
+                    [(cons (and (not (? $fn-header?)) stmt) decls)
+                     (define-values (stmts expr) (extract decls))
+                     (values (cons stmt stmts) expr)]))])
+    (with-output-language (Cst Expr)
+      `(block ,stmts ... ,expr))))
+
+;;; The actual LALR parser (and some helpers):
 
 (define (binapp l op r)
   (with-output-language (Cst Expr)
@@ -186,7 +199,7 @@
         [(LBRACE block RBRACE) $2]
         [(var) $1]
         [(datum) $1])
-        
+
       (block
         [(block-decl-list) (parse-decls (reverse $1))])
 
