@@ -7,6 +7,7 @@ extern crate clap;
 extern crate libloading;
 extern crate libffi;
 
+mod parse;
 mod data;
 mod code;
 mod vm;
@@ -15,7 +16,7 @@ use std::io::{self, Read};
 use std::fs::File;
 use clap::{App, Arg};
 
-use code::{Input, parse_program};
+use parse::{Input, parse_program};
 use vm::VM;
 
 fn main() {

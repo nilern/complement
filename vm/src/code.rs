@@ -1,9 +1,6 @@
-use std::mem::size_of;
 use std::marker::PhantomData;
-use std::str::{self, Utf8Error};
-use gc::Gc;
 
-use data::{Program, Proc, Value, ValueRef};
+use data::{Tuple, VMBox, Closure, CodePtr, Record, ForeignPtr, ForeignFn};
 
 const BYTE_MASK: u32 = (1 << 8) - 1;
 const ATOM_INDEX_SHIFT: usize = 1;
@@ -156,218 +153,161 @@ impl From<u32> for Instr {
     fn from(bits: u32) -> Instr { Instr(bits) }
 }
 
-pub trait ParseFields<T> {
-    fn parse(self) -> T;
+pub enum InstrView<'a> {
+    Mov { dest: DestReg, src: AnyAtom },
+
+    IEq { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    ILt { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    ILe { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IGt { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IGe { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+
+    INeg { dest: DestReg, src: Atom<isize> },
+    IAdd { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    ISub { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IMul { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IDiv { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IRem { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+    IMod { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
+
+    BoxNew { dest: DestReg },
+    BoxInit { lvbox: SrcReg<&'a VMBox>, value: AnyAtom },
+    BoxGet { dest: DestReg, rvbox: Atom<&'a VMBox> },
+
+    TupleNew { dest: DestReg, len: Atom<usize> },
+    TupleInit { lvtuple: SrcReg<&'a Tuple>, index: Atom<usize>, value: AnyAtom },
+    TupleLen { dest: DestReg, rvtuple: Atom<&'a Tuple> },
+    TupleGet { dest: DestReg, rvtuple: Atom<&'a Tuple>, index: Atom<usize> },
+
+    FnNew { dest: DestReg, len: Atom<usize> },
+    FnInitCode { lvfn: SrcReg<&'a Closure>, index: ProcIndex },
+    FnInit { lvfn: SrcReg<&'a Closure>, index: Atom<usize>, value: AnyAtom },
+    FnCode { dest: DestReg, rvfn: Atom<&'a Closure> },
+    FnGet { dest: DestReg, rvfn: SrcReg<&'a Closure>, index: Atom<usize> },
+    
+    ContNew { dest: DestReg, len: Atom<usize> },
+    ContInitCode { lvcont: SrcReg<&'a Closure>, offset: Offset },
+    ContInit { lvcont: SrcReg<&'a Closure>, index: Atom<usize>, value: AnyAtom },
+    ContCode { dest: DestReg, rvcont: Atom<&'a Closure> },
+    ContGet { dest: DestReg, rvcont: SrcReg<&'a Closure>, index: Atom<usize> },
+
+    DenvNew { dest: DestReg },
+    
+    RecNew { dest: DestReg, len: Atom<usize> },
+    RecInitType { lvrec: SrcReg<&'a Record>, typ: AnyAtom },
+    RecInit { lvrec: SrcReg<&'a Record>, index: Atom<usize>, value: AnyAtom },
+    RecType { dest: DestReg, rvrec: Atom<&'a Record> },
+    RecGet { dest: DestReg, rvrec: Atom<&'a Record>, index: Atom<usize> },
+
+    Brf { cond: Atom<bool>, offset: Offset },
+    
+    IJmp { code: SrcReg<&'a CodePtr> },
+    
+    Halt { value: AnyAtom },
+
+    FLibOpen { dest: DestReg, path: Atom<&'a str> },
+    FLibSym { dest: DestReg, lib: AnySrcReg, name: Atom<&'a str> },
+    FFnNew { dest: DestReg, ptr: SrcReg<&'a ForeignPtr> },
+    FFnInitType { ffn: SrcReg<&'a ForeignFn>, arg_types: SrcReg<&'a Tuple>, ret_type: AnyAtom },
+    FFnInitCConv { ffn: SrcReg<&'a ForeignFn>, conv_name: Atom<&'a str> },
+    FFnCall { ffn: SrcReg<&'a ForeignFn> }
 }
 
-impl ParseFields<DestReg> for Instr {
-    fn parse(self) -> DestReg { self.reg_arg(0) }
-}
+impl Instr {
+    pub fn decode(&self) -> InstrView {
+        use self::InstrView::*;
     
-impl<T> ParseFields<SrcReg<T>> for Instr {
-    fn parse(self) -> SrcReg<T> { From::from(self.src_reg_arg(0)) }
-}
-    
-impl ParseFields<AnyAtom> for Instr {
-    fn parse(self) -> AnyAtom { self.atom_arg(0) }
-}
+        match self.op() {
+            MOV => Mov { dest: self.reg_arg(0), src: self.atom_arg(1) },
 
-impl<T> ParseFields<Atom<T>> for Instr {
-    fn parse(self) -> Atom<T> { Atom::from(self.atom_arg(0)) }
-}
-    
-impl ParseFields<(DestReg, AnyAtom)> for Instr {
-    fn parse(self) -> (DestReg, AnyAtom) {
-        (self.reg_arg(0), self.atom_arg(1))
-    }
-}
+            IEQ => IEq { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                         arg2: From::from(self.atom_arg(2)) },
+            ILT => ILt { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                         arg2: From::from(self.atom_arg(2)) },
+            ILE => ILe { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                         arg2: From::from(self.atom_arg(2)) },
+            IGT => IGt { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                         arg2: From::from(self.atom_arg(2)) },
+            IGE => IGe { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                         arg2: From::from(self.atom_arg(2)) },
+                         
+            INEG => INeg { dest: self.reg_arg(0), src: From::from(self.atom_arg(1)) },
+            IADD => IAdd { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+            ISUB => ISub { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+            IMUL => IMul { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+            IDIV => IDiv { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+            IREM => IRem { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+            IMOD => IMod { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
+                           arg2: From::from(self.atom_arg(2)) },
+
+            BOX_NEW  => BoxNew { dest: self.reg_arg(0) },
+            BOX_INIT => BoxInit { lvbox: SrcReg::from(self.src_reg_arg(0)),
+                                  value: self.atom_arg(1) },
+            BOX_GET  => BoxGet { dest: self.reg_arg(0), rvbox: From::from(self.atom_arg(1)) },
+
+            TUPLE_NEW  => TupleNew { dest: self.reg_arg(0), len: From::from(self.atom_arg(1)) },
+            TUPLE_INIT => TupleInit { lvtuple: SrcReg::from(self.src_reg_arg(0)),
+                                      index: From::from(self.atom_arg(1)),
+                                      value: self.atom_arg(2) },
+            TUPLE_LEN  => TupleLen { dest: self.reg_arg(0), rvtuple: From::from(self.atom_arg(1)) },
+            TUPLE_GET  => TupleGet { dest: self.reg_arg(0), rvtuple: From::from(self.atom_arg(1)),
+                                     index: From::from(self.atom_arg(2)) },
+
+            FN_NEW  => FnNew { dest: self.reg_arg(0), len: From::from(self.atom_arg(1)) },
+            FN_INIT_CODE => FnInitCode { lvfn: SrcReg::from(self.src_reg_arg(0)),
+                                         index: self.proc_arg() },
+            FN_INIT => FnInit { lvfn: SrcReg::from(self.src_reg_arg(0)),
+                                index: From::from(self.atom_arg(1)),
+                                value: self.atom_arg(2) },
+            FN_CODE => FnCode { dest: self.reg_arg(0), rvfn: From::from(self.atom_arg(1)) },
+            FN_GET  => FnGet { dest: self.reg_arg(0), rvfn: From::from(self.src_reg_arg(1)),
+                               index: From::from(self.atom_arg(2)) },
+
+            CONT_NEW  => ContNew { dest: self.reg_arg(0), len: From::from(self.atom_arg(1)) },
+            CONT_INIT_CODE => ContInitCode { lvcont: SrcReg::from(self.src_reg_arg(0)),
+                                             offset: self.offset_arg() },
+            CONT_INIT => ContInit { lvcont: SrcReg::from(self.src_reg_arg(0)),
+                                    index: From::from(self.atom_arg(1)),
+                                    value: self.atom_arg(2) },
+            CONT_CODE => ContCode { dest: self.reg_arg(0), rvcont: From::from(self.atom_arg(1)) },
+            CONT_GET  => ContGet { dest: self.reg_arg(0), rvcont: From::from(self.src_reg_arg(1)),
+                                   index: From::from(self.atom_arg(2)) },
+
+            DENV_NEW => DenvNew { dest: self.reg_arg(0) },
+
+            REC_NEW  => RecNew { dest: self.reg_arg(0), len: From::from(self.atom_arg(1)) },
+            REC_INIT_TYPE => RecInitType { lvrec: SrcReg::from(self.src_reg_arg(0)),
+                                           typ: self.atom_arg(1) },
+            REC_INIT => RecInit { lvrec: SrcReg::from(self.src_reg_arg(0)),
+                                  index: From::from(self.atom_arg(1)),
+                                  value: self.atom_arg(2) },
+            REC_TYPE  => RecType { dest: self.reg_arg(0), rvrec: From::from(self.atom_arg(1)) },
+            REC_GET   => RecGet { dest: self.reg_arg(0), rvrec: From::from(self.atom_arg(1)),
+                                  index: From::from(self.atom_arg(2)) },
+
+            BRF => Brf { cond: From::from(self.atom_arg(0)), offset: self.offset_arg() },
+                
+            IJMP => IJmp { code: From::from(self.src_reg_arg(0)) },
+            
+            HALT => Halt { value: self.atom_arg(0) },
         
-impl<T> ParseFields<(SrcReg<T>, AnyAtom)> for Instr {
-    fn parse(self) -> (SrcReg<T>, AnyAtom) {
-        (SrcReg::from(self.src_reg_arg(0)), self.atom_arg(1))
-    }
-}
-
-impl<T> ParseFields<(DestReg, SrcReg<T>)> for Instr {
-    fn parse(self) -> (DestReg, SrcReg<T>) {
-        (self.reg_arg(0), SrcReg::from(self.src_reg_arg(1)))
-    }
-}
-
-impl<T> ParseFields<(DestReg, Atom<T>)> for Instr {
-    fn parse(self) -> (DestReg, Atom<T>) {
-        (self.reg_arg(0), Atom::from(self.atom_arg(1)))
-    }
-}
-
-impl<T, U> ParseFields<(SrcReg<T>, Atom<U>)> for Instr {
-    fn parse(self) -> (SrcReg<T>, Atom<U>) {
-        (From::from(self.src_reg_arg(0)), Atom::from(self.atom_arg(1)))
-    }
-}
-
-
-impl<T> ParseFields<(SrcReg<T>, ProcIndex)> for Instr {
-    fn parse(self) -> (SrcReg<T>, ProcIndex) {
-        (From::from(self.src_reg_arg(0)), self.proc_arg())
-    }
-}
-
-impl<T> ParseFields<(SrcReg<T>, Offset)> for Instr {
-    fn parse(self) -> (SrcReg<T>, Offset) {
-        (From::from(self.src_reg_arg(0)), self.offset_arg())
-    }
-}
-
-impl ParseFields<(DestReg, AnyAtom, AnyAtom)> for Instr {
-    fn parse(self) -> (DestReg, AnyAtom, AnyAtom) {
-        (self.reg_arg(0), self.atom_arg(1), self.atom_arg(2))
-    }
-}
-            
-impl<T, U> ParseFields<(SrcReg<T>, SrcReg<U>, AnyAtom)> for Instr {
-    fn parse(self) -> (SrcReg<T>, SrcReg<U>, AnyAtom) {
-        (SrcReg::from(self.src_reg_arg(0)), From::from(self.src_reg_arg(1)), self.atom_arg(2))
-    }
-}
-            
-impl<T, U, V> ParseFields<(SrcReg<T>, SrcReg<U>, Atom<V>)> for Instr {
-    fn parse(self) -> (SrcReg<T>, SrcReg<U>, Atom<V>) {
-        (SrcReg::from(self.src_reg_arg(0)), From::from(self.src_reg_arg(1)), From::from(self.atom_arg(2)))
-    }
-}
-            
-impl<T, U> ParseFields<(SrcReg<T>, Atom<U>, AnyAtom)> for Instr {
-    fn parse(self) -> (SrcReg<T>, Atom<U>, AnyAtom) {
-        (SrcReg::from(self.src_reg_arg(0)), From::from(self.atom_arg(1)), self.atom_arg(2))
-    }
-}
-        
-impl<T> ParseFields<(DestReg, Atom<T>, AnyAtom)> for Instr {
-    fn parse(self) -> (DestReg, Atom<T>, AnyAtom) {
-        (self.reg_arg(0), From::from(self.atom_arg(1)), self.atom_arg(2))
-    }
-}
-    
-impl<T, U> ParseFields<(DestReg, Atom<T>, Atom<U>)> for Instr {
-    fn parse(self) -> (DestReg, Atom<T>, Atom<U>) {
-        (self.reg_arg(0), From::from(self.atom_arg(1)), From::from(self.atom_arg(2)))
-    }
-}
-
-impl<T> ParseFields<(DestReg, AnySrcReg, Atom<T>)> for Instr {
-    fn parse(self) -> (DestReg, AnySrcReg, Atom<T>) {
-        (self.reg_arg(0), self.src_reg_arg(1), Atom::from(self.atom_arg(2)))
-    }
-}
-
-impl<T, U> ParseFields<(DestReg, SrcReg<T>, Atom<U>)> for Instr {
-    fn parse(self) -> (DestReg, SrcReg<T>, Atom<U>) {
-        (self.reg_arg(0), From::from(self.src_reg_arg(1)), Atom::from(self.atom_arg(2)))
-    }
-}
-
-impl<T> ParseFields<(Atom<T>, Offset)> for Instr {
-    fn parse(self) -> (Atom<T>, Offset) {
-        (Atom::from(self.atom_arg(0)), self.offset_arg())
-    }
-}
-    
-#[derive(Debug)]
-pub enum ParseError {
-    Utf8(Utf8Error),
-    EOF
-}
-
-type ParseResult<T> = Result<T, ParseError>;
-
-#[derive(Debug)]
-pub struct Input<'a> {
-    slice: &'a [u8],
-    index: usize
-}
-
-impl<'a> Input<'a> {
-    pub fn new(slice: &[u8]) -> Input { Input { slice, index: 0 } }
-
-    fn len(&self) -> usize { self.slice.len() - self.index }
-
-    fn parse_copy<T: Copy>(&mut self) -> ParseResult<T> {
-        let size = size_of::<T>();
-        if self.len() >= size {
-            let ptr: *const T = self.slice[self.index..].as_ptr() as _;
-            self.index += size;
-            Ok(unsafe { *ptr })
-        } else {
-            Err(ParseError::EOF)
+            FLIB_OPEN => FLibOpen { dest: self.reg_arg(0), path: From::from(self.atom_arg(1)) },
+            FLIB_SYM => FLibSym { dest: self.reg_arg(0), lib: self.src_reg_arg(1),
+                                  name: From::from(self.atom_arg(2)) },
+            FFN_NEW => FFnNew { dest: self.reg_arg(0), ptr: From::from(self.src_reg_arg(1)) },
+            FFN_INIT_TYPE => FFnInitType { ffn: From::from(self.src_reg_arg(0)),
+                                           arg_types: From::from(self.src_reg_arg(1)),
+                                           ret_type: self.atom_arg(2) },
+            FFN_INIT_CCONV => FFnInitCConv { ffn: From::from(self.src_reg_arg(0)),
+                                             conv_name: From::from(self.atom_arg(1)) },
+            FFN_CALL => FFnCall { ffn: From::from(self.src_reg_arg(0)) },
+                         
+            _ => unreachable!()
         }
     }
-
-    fn parse_str(&mut self) -> ParseResult<&str> {
-        let len = self.parse_copy::<usize>()?;
-        if self.len() >= len {
-            let old_index = self.index;
-            self.index = self.index + len;
-            str::from_utf8(&self.slice[old_index..self.index])
-                .map_err(|err| ParseError::Utf8(err))
-        } else {
-            Err(ParseError::EOF) 
-        }
-    }
-    
-    fn parse_char(&mut self) -> ParseResult<char> {
-        match str::from_utf8(&self.slice[self.index..]) {
-            Ok(str) => {
-                let mut cs = str.char_indices();
-                if let Some((_, c)) = cs.next() {
-                    if let Some((i, _)) = cs.next() {
-                        self.index += i;
-                    }
-                    Ok(c)
-                } else {
-                    Err(ParseError::EOF)
-                }
-            },
-            Err(err) => Err(ParseError::Utf8(err))
-        }
-    }
-
-    fn parse_vec<T, F>(&mut self, parse_elem: F) -> ParseResult<Vec<T>>
-        where F: Fn(&mut Input) -> ParseResult<T>
-    {
-        let len = self.parse_copy::<usize>()?;
-        (0..len).map(|_| parse_elem(self)).collect()
-    }
-}
-
-fn parse_string(input: &mut Input) -> ParseResult<String> {
-    input.parse_str().map(str::to_string)
-}
-
-fn parse_instr(input: &mut Input) -> ParseResult<Instr> {
-    input.parse_copy::<u32>().map(Instr::from)
-}
-
-fn parse_const(input: &mut Input) -> ParseResult<ValueRef> {
-    match input.parse_copy::<u8>()? {
-        0 => input.parse_copy::<isize>().map(|i| Gc::new(Value::Int(i))),
-        1 => input.parse_char().map(|c| Gc::new(Value::Char(c))),
-        2 => parse_string(input).map(|s| Gc::new(Value::Symbol(s))),
-        3 => parse_string(input).map(|s| Gc::new(Value::String(s))),
-        _ => unimplemented!()
-    }
-}
-
-fn parse_proc(input: &mut Input) -> ParseResult<Gc<Proc>> {
-    let name = parse_string(input)?;
-    let consts = input.parse_vec(parse_const)?;
-    let instrs = input.parse_vec(parse_instr)?;
-    Ok(Gc::new(Proc { name, consts, instrs }))
-}
-
-pub fn parse_program(input: &mut Input) -> ParseResult<Program> {
-    let register_demand = input.parse_copy::<usize>()?;
-    let entry = input.parse_copy::<usize>()?;
-    let procs = input.parse_vec(parse_proc)?;
-    Ok(Program { register_demand, procs, entry })    
 }
