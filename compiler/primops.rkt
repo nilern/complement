@@ -3,9 +3,12 @@
 (provide primapply base-ops denv-ops)
 (require racket/match racket/undefined)
 
+;; Apply a primop to arguments. The curried ops argument is a hash from primop names to
+;; implementation functions
 (define ((primapply ops) op args)
   (apply (hash-ref ops op) args))
 
+;; Basic data operations.
 (define base-ops
   (hash
     '__iEq =
@@ -20,6 +23,7 @@
     '__boxSet set-box!
     '__boxGet unbox))
 
+;; Operations on dynamic environments.
 (define denv-ops
   (hash
     '__denvNew hash
