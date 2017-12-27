@@ -30,14 +30,21 @@
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS))
 
-  (define input  (current-input-port))
-  (define output (current-output-port))
+  (define input  (current-input-port))  ; Where to read source code from
+  (define output (current-output-port)) ; Where to write bytecode
 
-  (struct pass (dependencies action evaluator))
+  ;;; TODO: Use direct references instead of names for pass-dependencies. More straightforward and
+  ;;;       prevents creating loops (which make no sense and are not handled by perform-upto) by
+  ;;;       accident.
 
+  ;; A compilation pass.
+  (struct pass (dependencies ; Needs the results of the passes named here.
+                action       ; The function that implements the pass functionality.
+                evaluator))  ; An evaluator function for the resulting IR (can also be #f).
+
+  ;; Pass registry.
   (define passes
     (hash
-      ;; TODO: Fill out missing syntax:
       'parse             (pass '() (lambda () (parse input)) eval-Cst)
       'alphatize         (pass '(parse) alphatize eval-Cst)
       'lex-straighten    (pass '(alphatize) lex-straighten eval-Cst)
@@ -68,21 +75,23 @@
       'collect-constants   (pass '(resolve) collect-constants #f)
       'assemble            (pass '(collect-constants) (cute assemble <> output) #f)))
 
+  ;; Post-order walk of the pass dependency DAG rooted at the pass called `pass-name`. A pass is
+  ;; visited by calling `f` on the pass name, the pass value and the results of its dependencies.
   (define (perform-upto f pass-name)
     (define results (make-hash))
     (let upto ([pass-name pass-name])
-      (if (hash-has-key? results pass-name)
-        (hash-ref results pass-name)
+      (if (hash-has-key? results pass-name) ; Have we already run the pass?
+        (hash-ref results pass-name)        ; Return cached result.
         (let* ([pass (hash-ref passes pass-name)]
-               [dep-results (map upto (pass-dependencies pass))]
+               [dep-results (map upto (pass-dependencies pass))] ; Recur on dependencies.
                [result (f pass-name pass dep-results)])
-          (hash-set! results pass-name result)
+          (hash-set! results pass-name result) ; Cache the result.
           result))))
 
   (define (main)
-    (define verbose #f)
-    (define evaluate #f)
-    (define required-pass 'assemble)
+    (define verbose #f)  ; Verbose output (print IR:s etc.).
+    (define evaluate #f) ; Evaluate each IR.
+    (define required-pass 'assemble) ; The last pass to be run. By default, emit bytecode.
     (command-line
       #:once-each
       [("-o") output-filename "Name of output file."
@@ -104,11 +113,11 @@
     (perform-upto (lambda (pass-name pass deps)
                     (when verbose
                       (printf "# ~a:\n\n" pass-name))
-                    (let ([result (apply (pass-action pass) deps)])
+                    (let ([result (apply (pass-action pass) deps)]) ; Perform the pass action.
                       (when verbose
                         (pretty-print result)
                         (when evaluate
-                          (when-let (evalf (pass-evaluator pass))
+                          (when-let (evalf (pass-evaluator pass)) ; Evaluate the resulting IR.
                             (display "\n---\n\n")
                             (pretty-print (time (evalf result)))))
                         (display "\n===\n\n"))
