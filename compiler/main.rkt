@@ -11,14 +11,21 @@
            (only-in srfi/26 cute)
 
            (only-in "util.rkt" when-let)
+
            (only-in "passes/parse.rkt" parse)
-           (prefix-in cst: "passes/cst.rkt")
-           (only-in "passes/ast.rkt" cps-convert)
-           (prefix-in cps: "passes/cps.rkt")
-           (prefix-in cpcps: "passes/cpcps.rkt")
+           (only-in "passes/frontend.rkt" alphatize lex-straighten introduce-dyn-env add-dispatch)
+
+           (only-in "passes/cps.rkt" (census cps-census))
+           (only-in "passes/cps-convert.rkt" cps-convert relax-edges)
+
+           (only-in "passes/closure-convert.rkt" analyze-closures closure-convert)
+           (rename-in "passes/closure-convert.rkt" (shrink cpcps-shrink))
            (prefix-in ltab: (submod "passes/cpcps.rkt" label-table))
+
+           (only-in "passes/instruction-selection.rkt" select-instructions)
            (only-in "passes/register-allocation.rkt" allocate-registers)
-           (prefix-in codegen: "passes/codegen.rkt")
+           (only-in "passes/codegen.rkt" linearize resolve collect-constants assemble)
+
            (only-in "eval/cst.rkt" eval-Cst)
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS))
@@ -32,33 +39,34 @@
     (hash
       ;; TODO: Fill out missing syntax:
       'parse             (pass '() (lambda () (parse input)) eval-Cst)
-      'alphatize         (pass '(parse) cst:alphatize eval-Cst)
-      'lex-straighten    (pass '(alphatize) cst:lex-straighten eval-Cst)
-      'introduce-dyn-env (pass '(lex-straighten) cst:introduce-dyn-env #f)
-      'add-dispatch      (pass '(introduce-dyn-env) cst:add-dispatch #f)
+      'alphatize         (pass '(parse) alphatize eval-Cst)
+      'lex-straighten    (pass '(alphatize) lex-straighten eval-Cst)
+      'introduce-dyn-env (pass '(lex-straighten) introduce-dyn-env #f)
+      'add-dispatch      (pass '(introduce-dyn-env) add-dispatch #f)
 
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
-      'cps-census       (pass '(cps-convert) (cute cps:census <> 1) #f)
+      'cps-census       (pass '(cps-convert) (cute cps-census <> 1) #f)
       'relax-edges      (pass '(cps-convert cps-census)
                               (lambda (ir census-tables)
-                                (cps:relax-edges ir (hash-ref census-tables 'label-table)
-                                                    (hash-ref census-tables 'var-table)))
+                                (relax-edges ir (hash-ref census-tables 'label-table)
+                                                (hash-ref census-tables 'var-table)))
                               eval-CPS)
-      'analyze-closures (pass '(relax-edges) cps:analyze-closures #f)
+
+      'analyze-closures (pass '(relax-edges) analyze-closures #f)
       'closure-convert  (pass '(relax-edges cps-census analyze-closures)
                               (lambda (ir census-tables closure-stats)
-                                (cps:closure-convert ir closure-stats
-                                                        (hash-ref census-tables 'label-table)))
+                                (closure-convert ir closure-stats
+                                                 (hash-ref census-tables 'label-table)))
                               eval-CPCPS)
       'cpcps-label-table   (pass '(closure-convert) ltab:make #f)
-      'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps:shrink eval-CPCPS)
+      'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps-shrink eval-CPCPS)
 
-      'select-instructions (pass '(cpcps-shrink) cpcps:select-instructions #f)
+      'select-instructions (pass '(cpcps-shrink) select-instructions #f)
       'allocate-registers  (pass '(select-instructions cpcps-label-table) allocate-registers #f)
-      'linearize           (pass '(allocate-registers cpcps-label-table) codegen:linearize #f)
-      'resolve             (pass '(linearize) codegen:resolve #f)
-      'collect-constants   (pass '(resolve) codegen:collect-constants #f)
-      'assemble            (pass '(collect-constants) (cute codegen:assemble <> output) #f)))
+      'linearize           (pass '(allocate-registers cpcps-label-table) linearize #f)
+      'resolve             (pass '(linearize) resolve #f)
+      'collect-constants   (pass '(resolve) collect-constants #f)
+      'assemble            (pass '(collect-constants) (cute assemble <> output) #f)))
 
   (define (perform-upto f pass-name)
     (define results (make-hash))
@@ -66,7 +74,8 @@
       (if (hash-has-key? results pass-name)
         (hash-ref results pass-name)
         (let* ([pass (hash-ref passes pass-name)]
-               [result (f pass-name pass (map upto (pass-dependencies pass)))])
+               [dep-results (map upto (pass-dependencies pass))]
+               [result (f pass-name pass dep-results)])
           (hash-set! results pass-name result)
           result))))
 
