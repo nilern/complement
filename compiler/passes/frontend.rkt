@@ -6,8 +6,10 @@
          nanopass/base
          "../langs.rkt" (only-in "../util.rkt" clj-group-by))
 
+;; Give each lexical variable a unique name.
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions
+    ;; Renaming-env frame for method params.
     (define (param-bindings params)
       (for/fold ([env (hash)])
                 ([param params])
@@ -15,6 +17,7 @@
           [(lex ,n) (hash-set env n (gensym n))]
           [else env])))
 
+    ;; Renaming-env frame for block definitions.
     (define (block-bindings stmts)
       (for/fold ([env (hash)])
                 ([stmt stmts])
@@ -22,6 +25,7 @@
           [(def (lex ,n) ,e) (hash-set env n (gensym n))]
           [else env])))
 
+    ;; Extend `env` with `bindings`.
     (define (push-frame env bindings)
       (hash-union env bindings #:combine (λ (_ v) v))))
 
@@ -42,22 +46,28 @@
 
   (Expr cst (hash)))
 
+;; Make recursive lexical bindings explicit with box allocations and assignments.
 (define-pass lex-straighten : Cst (ir) -> Cst ()
   (definitions
+    ;; Empty environment.
     (define (env:empty) (hash))
 
+    ;; Extend environment with method parameters.
     (define (env:push-fn parent binders)
       (for/fold ([env parent])
                 ([binder binders])
         (hash-set env binder 'plain)))
 
+    ;; Extend environment with block definitions.
     (define (env:push-block parent binders)
       (for/fold ([env parent])
                 ([binder binders])
         (hash-set env binder (box #f))))
 
+    ;; Get the variable description from environment.
     (define env:ref hash-ref)
 
+    ;; Get the lexical names bound by case parameters.
     (define (case-binders params)
       (define (step param binders)
         (nanopass-case (Cst Var) param
@@ -65,6 +75,7 @@
           [(dyn ,n) binders]))
       (foldr step '() params))
 
+    ;; Get the lexical names bound in a block.
     (define (block-binders stmts)
       (define (step stmt binders)
         (nanopass-case (Cst Stmt) stmt
@@ -72,27 +83,32 @@
           [else binders]))
       (foldr step '() stmts))
 
+    ;; Return box allocation Stmt for name, #f if unnecessary (binding is not recursive).
     (define (emit-init env name)
       (with-output-language (Cst Stmt)
         (match (env:ref env name)
           [(or 'plain (box 'plain) (box #f)) #f]
           [(box 'boxed) `(def (lex ,name) (primcall __boxNew))])))
 
+    ;; Return definition Stmt for name. If binding is recursive, it will be a box assignment instead
+    ;; of a definition.
     (define (emit-set env name expr)
       (with-output-language (Cst Stmt)
         (match (env:ref env name)
           [(or 'plain (box 'plain)) `(def (lex ,name) ,expr)]
           [(and loc (box #f))
-           (set-box! loc 'plain)
+           (set-box! loc 'plain) ; Was defined before every use, remember that.
            `(def (lex ,name) ,expr)]
           [(box 'boxed) `(primcall __boxSet (lex ,name) ,expr)])))
 
+    ;; return an access Expr for name. If binding is recursive, it will be a box dereference instead
+    ;; of a direct variable reference.
     (define (emit-get env name)
       (with-output-language (Cst Expr)
         (match (env:ref env name)
           [(or 'plain (box 'plain)) `(lex ,name)]
           [(and loc (box status))
-           (unless status (set-box! loc 'boxed))
+           (unless status (set-box! loc 'boxed)) ; Was accessed before definition, remember that.
            `(primcall __boxGet (lex ,name))]))))
 
   (Expr : Expr (ir env) -> Expr ()
@@ -116,8 +132,10 @@
 
   (Expr ir (env:empty)))
 
+;; Reify dynamic environment and pass it around explicitly.
 (define-pass introduce-dyn-env : Cst (cst) -> LexCst ()
   (definitions
+    ;; A `((const ,name) (primcall __boxNew)) for every dynamic var defined in block.
     (define (block-bindings stmts)
       (with-output-language (LexCst Expr)
         (define (step stmt bindings)
@@ -126,6 +144,8 @@
             [else bindings]))
         (foldr step '() stmts)))
 
+    ;; A `((const ,name) ,param) for every dynamic param and the list of lexical params including
+    ;; temps for the dynamic params.
     (define (fn-bindings params)
       (with-output-language (LexCst Expr)
         (define-values (bindings lex-params)
@@ -139,10 +159,13 @@
                        (cons n* lex-params))])))
         (values (reverse bindings) (reverse lex-params))))
 
+    ;; Code for the allocation of the initial dynamic env.
     (define (emit-init denv-name)
       (with-output-language (LexCst Stmt)
         `(def ,denv-name (primcall __denvNew))))
 
+    ;; Code for the allocation of a new dynamic env frame and the name to use for it. If bindings is
+    ;; empty #f is returned instead of code and the name is the denv-name argument.
     (define (emit-push denv-name bindings)
       (with-output-language (LexCst Stmt)
         (match bindings
@@ -151,9 +174,11 @@
              (values `(def ,denv-name* (primcall __denvPush ,denv-name ,(flatten bindings) ...))
                      denv-name*)])))
 
+    ;; Code for dynamic var reference.
     (define (emit-get denv-name name)
       (with-output-language (LexCst Expr) `(primcall __denvGet ,denv-name (const ,name))))
 
+    ;; Code for dynamic var initialization.
     (define (emit-set denv-name name expr)
       (with-output-language (LexCst Expr)`(primcall __boxSet ,(emit-get denv-name name) ,expr))))
 
@@ -193,13 +218,16 @@
   (let ([denv-name (gensym 'denv)])
     `(block ,(emit-init denv-name) ,(Expr cst denv-name))))
 
+;; Make function method dispatch explicit using if-expressions.
 (define-pass add-dispatch : LexCst (ir) -> Ast ()
   (definitions
+    ;; Can expr be reduced to a constant value and if so, also that value.
     (define (const-value expr) ; TODO: use option type for this
       (nanopass-case (Ast Expr) expr
         [(const ,c) (values #t c)]
         [else (values #f expr)]))
 
+    ;; Code for the cases of a certain arity, dispatching on the case preconditions.
     (define (emit-cases argv cases)
       (with-output-language (Ast Expr)
         (match cases
@@ -214,6 +242,7 @@
                 [(_ _) `(if ,cond ,body ,(emit-cases argv cases*))]))]
           ['() `(primcall __raise (const PreCondition))])))
 
+    ;; Code for the function body, dispatching on arity.
     (define (emit-arities argv argc arities)
       (with-output-language (Ast Expr)
         (match arities
