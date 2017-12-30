@@ -4,10 +4,13 @@
 (require (only-in srfi/26 cute)
          (only-in threading ~>)
          nanopass/base
-         
+
          "../langs.rkt")
 
 ;; TODO: use this in shrinking
+;; For every use of a variable, vtab[var]['uses] += delta.
+;; For every direct call of a label, ltab[label]['calls] += delta.
+;; For every escaping use of a label, ltab[label]['escapes] += delta.
 (define-pass census! : CPS (ir delta ltab vtab) -> * ()
   (definitions
     (define (make-var-entry) (make-hash '((uses . 0))))
@@ -65,6 +68,9 @@
     [(lex ,n) (used! vtab n)]
     [(label ,n) (called! ltab n)]))
 
+;; Build var-table where vtab[var]['uses] is the number of uses of that variable
+;; and label-table where ltab[label]['calls] is the number of direct calls of that label
+;;                   and ltab[label]['escapes] is the number of escaping uses of that label.
 (define (census ir delta)
   (let ([label-table (make-hash)]
         [var-table (make-hash)])

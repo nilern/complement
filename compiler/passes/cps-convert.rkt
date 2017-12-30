@@ -12,8 +12,10 @@
 
 ;; TODO: __raise doesn't return so turning it into a Transfer (just like we did
 ;;       with __halt) should compress the output of this somewhat
+;; CPS-convert the AST.
 (define-pass cps-convert : Ast (ir) -> CPS ()
   (definitions
+    ;; Continuation frames:
     (struct $cont:fn (cont arges) #:transparent)
     (struct $cont:if (cont then else) #:transparent)
     (struct $cont:args (cont arges callee argas) #:transparent)
@@ -23,30 +25,39 @@
     (struct $cont:return (name) #:transparent)
     (struct $cont:halt () #:transparent)
 
+    ;; Control flow graph builder.
     (struct $cfg-builder (entry labels conts))
 
+    ;; Create a cfg-builder with the given entry continuation.
     (define (make-cfg-builder entry)
       ($cfg-builder entry (make-gvector) (make-gvector)))
 
+    ;; Add `cont` into `builder` under `label`.
     (define (emit-cont! builder label cont)
       (gvector-add! ($cfg-builder-labels builder) label)
       (gvector-add! ($cfg-builder-conts builder) cont))
 
+    ;; Build the CFG from the continuations in `builder`.
     (define (build-cfg builder)
       (with-output-language (CPS CFG)
         (match-define ($cfg-builder entry labels conts) builder)
         `(cfg ([,(gvector->list labels) ,(gvector->list conts)] ...) ,entry)))
 
+    ;; Builder for a single continuation.
     (struct $cont-builder (label formals stmts))
 
+    ;; Make a cont-builder for the continuation labeled with the given label and formals.
     (define (make-cont-builder label formals)
       ($cont-builder label formals (make-gvector)))
 
-      (define (emit-stmt! builder name expr)
-        (with-output-language (CPS Stmt)
-          (gvector-add! ($cont-builder-stmts builder)
-                        (if name `(def ,name ,expr) expr))))
+    ;; Push a statement evaluating `expr` and defining name (if not #f) into (cont-)`builder`.
+    (define (emit-stmt! builder name expr)
+      (with-output-language (CPS Stmt)
+        (gvector-add! ($cont-builder-stmts builder)
+                      (if name `(def ,name ,expr) expr))))
 
+    ;; Get a trivial expression for `expr` using (cont-)`builder` if not already trivial. If `name`
+    ;; is non-#f and `expr` non-trivial return `name` after emitting into `builder`.
     (define (trivialize! builder name expr)
       (nanopass-case (CPS Expr) expr
         [,a a]
@@ -54,6 +65,8 @@
               (emit-stmt! builder name* expr)
               (with-output-language (CPS Var) `(lex ,name*))]))
 
+    ;; Get a trivial expression (that is, `(label ,label)) for cont, emitting into `cfg-builder` if
+    ;; necessary.
     (define (trivialize-cont! cont cfg-builder)
       (define (trivialize! param continue)
         (with-output-language (CPS Transfer)
@@ -77,6 +90,7 @@
            (define param (gensym 'v))
            (trivialize! param (cute continue cont `(lex ,param) #f <> cfg-builder)))]))
 
+    ;; Build the continuation using the information in `cont-builder` and ending in `transfer`.
     (define (build-cont/transfer cont-builder transfer)
       (with-output-language (CPS Cont)
         (match-define ($cont-builder label formals stmts) cont-builder)
@@ -84,6 +98,11 @@
                              ,(gvector->list stmts) ...
                              ,transfer))))
 
+    ;; TODO: This makes no sense as an abstraction, split into multiple fns.
+    ;; Build the continuation using the information in `cont-builder` and with the value of `aexpr`
+    ;; halting if `labels` is empty
+    ;; calling label if labels is `(,label)
+    ;; calling label1 if true and label2 if false when label is `(,label1 ,label2)
     (define (build-cont/atom cont-builder aexpr . labels)
       (with-output-language (CPS Transfer)
         (build-cont/transfer
@@ -93,11 +112,15 @@
            [(list label) `(continue ,label ,aexpr)]
            [(list label1 label2) `(if ,aexpr ,label1 ,label2)]))))
 
+    ;; Build the continuation using the information in `cont-builder` and ending in a tail call to
+    ;; `f` with `args` and the continuation `label`.
     (define (build-cont/call cont-builder f label args)
       (with-output-language (CPS Transfer)
         (build-cont/transfer cont-builder `(call ,f ,label ,args ...))))
 
     (with-output-language (CPS Expr)
+      ;; Emit the code for `cont` and continuing into it with the value of `expr` and using
+      ;; `name-hint` to trivialize `expr` when necessary.
       (define (continue cont expr name-hint cont-builder cfg-builder)
         (match cont
           [($cont:fn cont* '())
@@ -153,6 +176,7 @@
            (define-values (label cont) (build-cont/atom cont-builder aexpr))
            (emit-cont! cfg-builder label cont)])))
 
+    ;; Emit toplevel or fn body.
     (define (body expr cont entry params)
       (let* ([cont-builder (make-cont-builder entry params)]
              [cfg-builder (make-cfg-builder entry)]
@@ -182,33 +206,42 @@
   (body ir ($cont:halt) (gensym 'main) '()))
 
 ;; TODO: Don't mutate the census tables.
+;; Remove critical edges.
 (define-pass relax-edges : CPS (ir ltab vtab) -> CPS ()
   (definitions
+    ;; Control Flow Graph builder.
     (struct $cfg-builder (conts entry))
 
+    ;; Create a cfg-builder with the given entry continuation label.
     (define (make-cfg-builder entry)
       ($cfg-builder (make-hash) entry))
 
+    ;; Has a continuation been emitted into `cfg-builder` under `label`?
     (define (visited? cfg-builder label)
       (hash-has-key? ($cfg-builder-conts cfg-builder) label))
 
+    ;; Get label-cont pair of the cont formerly known by `label`, for `purpose`.
     (define (lk-ref cfg-builder label purpose)
       (~> ($cfg-builder-conts cfg-builder)
           (hash-ref label)
           (hash-ref purpose)))
 
+    ;; Get the label of the cont formerly known by `label`, for `purpose`.
     (define (label-ref cfg-builder label purpose)
       (car (lk-ref cfg-builder label purpose)))
 
+    ;; Get the cont formerly known by `label`, for `purpose`.
     (define (cont-ref cfg-builder label purpose)
       (cdr (lk-ref cfg-builder label purpose)))
 
+    ;; cfg-builder[label][purpose] = (cons label* cont)
     (define (add-cont! cfg-builder label purpose cont)
       (define entry (~> ($cfg-builder-conts cfg-builder)
                         (hash-ref! label make-hash)))
       (hash-set! entry purpose (cons (if (= (hash-count entry) 0) label (gensym label))
                                      cont)))
 
+    ;; Build a CFG using the information in builder.
     (define (build-cfg cfg-builder)
       (with-output-language (CPS CFG)
         (define-values (labels conts)
@@ -221,13 +254,14 @@
             (hash-set! ltab-entry 'if-owned? (hash-has-key? ltab-entry 'if-owned?))))
         `(cfg ([,labels ,conts] ...) ,($cfg-builder-entry cfg-builder))))
 
+    ;; Create a continuation that just delegates to the cont of `label` and `cont`.
     (define (adapter-cont label cont)
       (with-output-language (CPS Cont)
         (nanopass-case (CPS Cont) cont
           [(cont (,n* ...) ,s* ... ,t)
            (define params (map gensym n*))
            (for ([param params])
-             (hash-set! vtab param (make-hash '((uses . 0)))))
+             (hash-set! vtab param (make-hash '((uses . 0))))) ;; FIXME: 0->1 (?)
            `(cont (,params ...) (continue (label ,label) (lex ,params) ...))]))))
 
   (CFG : CFG (ir) -> CFG ()
