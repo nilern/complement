@@ -9,8 +9,14 @@
 ;; Give each lexical variable a unique name.
 (define-pass alphatize : Cst (cst) -> Cst ()
   (definitions
+    ;; Renaming-env frame for method param.
+    (define (param-bindings param)
+      (nanopass-case (Cst Var) param
+        [(lex ,n) (hash n (gensym n))]
+        [else (hash)]))
+
     ;; Renaming-env frame for method params.
-    (define (param-bindings params)
+    (define (params-bindings params)
       (for/fold ([env (hash)])
                 ([param params])
         (nanopass-case (Cst Var) param
@@ -38,8 +44,11 @@
 
   (Case : Case (cst env) -> Case ()
     [(case (,x* ...) ,e? ,e)
-     (define env* (push-frame env (param-bindings x*)))
-     `(case (,(map (cute Var <> env*) x*) ...) ,(Expr e? env*) ,(Expr e env*))])
+     (define env* (push-frame env (params-bindings x*)))
+     `(case (,(map (cute Var <> env*) x*) ...) ,(Expr e? env*) ,(Expr e env*))]
+    [(case ,x ,e? ,e)
+     (define env* (push-frame env (param-bindings x)))
+     `(case ,(Var x env*) ,(Expr e? env*) ,(Expr e env*))])
 
   (Var : Var (cst env) -> Var ()
     [(lex ,n) `(lex ,(hash-ref env n))])
@@ -67,13 +76,15 @@
     ;; Get the variable description from environment.
     (define env:ref hash-ref)
 
+    ;; Get the lexical names bound by a variable.
+    (define (var-binders var)
+      (nanopass-case (Cst Var) var
+        [(lex ,n) (list n)]
+        [(dyn ,n) '()]))
+
     ;; Get the lexical names bound by case parameters.
     (define (case-binders params)
-      (define (step param binders)
-        (nanopass-case (Cst Var) param
-          [(lex ,n) (cons n binders)]
-          [(dyn ,n) binders]))
-      (foldr step '() params))
+      (append-map var-binders params))
 
     ;; Get the lexical names bound in a block.
     (define (block-binders stmts)
@@ -128,7 +139,10 @@
   (Case : Case (ir env) -> Case ()
     [(case (,x* ...) ,e? ,e)
      (let ([env (env:push-fn env (case-binders x*))])
-       `(case (,x* ...) ,(Expr e? env) ,(Expr e env)))])
+       `(case (,x* ...) ,(Expr e? env) ,(Expr e env)))]
+    [(case ,x ,e? ,e)
+     (let ([env (env:push-fn env (var-binders x))])
+       `(case ,x ,(Expr e? env) ,(Expr e env)))])
 
   (Expr ir (env:empty)))
 
@@ -144,20 +158,26 @@
             [else bindings]))
         (foldr step '() stmts)))
 
+    ;; A `((const ,name) ,param) for every dynamic param and the lexical param (a temp if param is
+    ;; dynamic).
+    (define (fn-binding param)
+      (with-output-language (LexCst Expr)
+        (nanopass-case (Cst Var) param
+          [(lex ,n) (values '() n)]
+          [(dyn ,n)
+           (define n* (gensym n))
+           (values (list (list `(const ,n) n*)) n*)])))
+
     ;; A `((const ,name) ,param) for every dynamic param and the list of lexical params including
     ;; temps for the dynamic params.
     (define (fn-bindings params)
-      (with-output-language (LexCst Expr)
-        (define-values (bindings lex-params)
-          (for/fold ([bindings '()] [lex-params '()])
-                    ([param params])
-            (nanopass-case (Cst Var) param
-              [(lex ,n) (values bindings (cons n lex-params))]
-              [(dyn ,n)
-               (define n* (gensym n))
-               (values (cons (list `(const ,n) n*) bindings)
-                       (cons n* lex-params))])))
-        (values (reverse bindings) (reverse lex-params))))
+      (define-values (bindings lex-params)
+        (for/fold ([bindings '()] [lex-params '()])
+                  ([param params])
+          (let-values ([(bindings* lex-param) (fn-binding param)])
+            (values (append bindings* bindings)
+                    (cons lex-param lex-params)))))
+      (values (reverse bindings) (reverse lex-params)))
 
     ;; Code for the allocation of the initial dynamic env.
     (define (emit-init denv-name)
@@ -209,6 +229,14 @@
           ,(if push
              (with-output-language (LexCst Expr)
                `(block ,push ,(Expr e denv-name)))
+             (Expr e denv-name))))]
+    [(case ,x ,e? ,e)
+     (let*-values ([(bindings lex-param) (fn-binding x)]
+                   [(push denv-name) (emit-push denv-name bindings)])
+       `(case ,lex-param ,(Expr e? denv-name)
+          ,(if push
+             (with-output-language (LexCst Expr)
+               `(block ,push ,(Expr e denv-name)))
              (Expr e denv-name))))])
 
   (Var : Var (cst denv-name) -> Expr ()
@@ -227,42 +255,49 @@
         [(const ,c) (values #t c)]
         [else (values #f expr)]))
 
-    ;; Code for the cases of a certain arity, dispatching on the case preconditions.
-    (define (emit-cases argv cases)
-      (with-output-language (Ast Expr)
-        (match cases
-          [(cons (list params cond body) cases*)
-           (define-values (condv-known? condv) (const-value cond))
-           `(block ,(for/list ([(p i) (in-indexed params)])
-                      (with-output-language (Ast Stmt)
-                        `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
-             ,(match/values (const-value cond)
-                [(#t #t) body]
-                [(#t #f) (emit-cases argv cases*)]
-                [(_ _) `(if ,cond ,body ,(emit-cases argv cases*))]))]
-          ['() `(primcall __raise (const PreCondition))])))
+    ;; Return the fields of a (LexCst Case)
+    (define (unapply-case case)
+      (nanopass-case (LexCst Case) case
+        [(case (,n* ...) ,e? ,e) (values n* (Expr e?) (Expr e))]
+        [(case ,n ,e? ,e) (values n (Expr e?) (Expr e))]))
 
-    ;; Code for the function body, dispatching on arity.
-    (define (emit-arities argv argc arities)
+    (define (emit-case-body argv argc case next)
       (with-output-language (Ast Expr)
-        (match arities
-          [(cons (cons arity cases) arities*)
-           `(if (primcall __iEq ,argc (const ,arity))
-              ,(emit-cases argv cases)
-              ,(emit-arities argv argc arities*))]
-          ['() `(primcall __raise (const Arity))]))))
+        (define (emit-inner cond body)
+          (match/values (const-value cond)
+            [(#t #t) body]
+            [(#t #f) `(continue ,next ,argc)] ; OPTIMIZE: These cases should just be skipped
+            [(_ _) `(if ,cond ,body (continue ,next ,argc))]))
+
+        (let*-values ([(params cond body) (unapply-case case)]
+                      [(condv-known? condv) (const-value cond)])
+          (if (list? params)
+            `(if (primcall __iEq ,argc (const ,(length params)))
+               (block ,(for/list ([(p i) (in-indexed params)])
+                         (with-output-language (Ast Stmt)
+                           `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
+                 ,(emit-inner cond body))
+               (continue ,next ,argc))
+            `(block (def ,params ,argv)
+               ,(emit-inner cond body))))))
+
+    (define ((emit-case argv) case next)
+      (with-output-language (Ast Case)
+        (define argc (gensym 'argc))
+        `(case (,argc) ,(emit-case-body argv argc case next)))))
 
   (Expr : Expr (ir) -> Expr ()
-    [(fn ,n (case (,n** ...) ,[e?*] ,[e*]) ...)
+    [(fn ,n ,fc* ...)
      (let* ([argv (gensym 'argv)]
-            [argc (gensym 'argc)]
-            [arities (~>> (map list n** e?* e*)
-                          (clj-group-by (compose1 length car))
-                          hash->list
-                          (sort _ < #:key car))])
+            [first-argc (gensym 'argc)]
+            [fail-argc (gensym 'argc)]
+            [succ-labels (map (lambda (_) (gensym 'k)) (rest fc*))]
+            [fail-label (gensym 'k)]
+            [labels (append succ-labels (list fail-label))])
        `(fn (,n ,argv)
-          (block
-            (def ,argc (primcall __tupleLength ,argv))
-            ,(emit-arities argv argc arities))))]
+          ([,succ-labels ,(map (emit-case argv) (rest fc*) (rest labels))] ...
+           [,fail-label  (case (,fail-argc) (primcall __raise (const NoSuchMethod)))])
+          (block (def ,first-argc (primcall __tupleLength ,argv))
+            ,(emit-case-body argv first-argc (first fc*) (first labels)))))]
     [(call ,[e1] ,[e2] ,[e*] ...)
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))

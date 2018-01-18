@@ -51,6 +51,7 @@ pub const REC_INIT     : u8 = 0x82;
 pub const REC_TYPE     : u8 = 0x83;
 pub const REC_GET      : u8 = 0x84;
 
+pub const BR : u8 = 0x90;
 pub const BRF: u8 = 0x91;
 
 pub const IJMP: u8 = 0xA1;
@@ -69,7 +70,7 @@ pub struct AnySrcReg(u8);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SrcReg<T>(AnySrcReg, PhantomData<T>);
-    
+
 impl<T> From<AnySrcReg> for SrcReg<T> {
     fn from(reg: AnySrcReg) -> SrcReg<T> { SrcReg(reg, PhantomData::default()) }
 }
@@ -77,7 +78,7 @@ impl<T> From<AnySrcReg> for SrcReg<T> {
 impl<T> From<SrcReg<T>> for AnySrcReg {
     fn from(reg: SrcReg<T>) -> AnySrcReg { reg.0 }
 }
-    
+
 impl From<AnySrcReg> for usize {
     fn from(reg: AnySrcReg) -> usize { reg.0 as usize }
 }
@@ -105,7 +106,7 @@ impl From<ProcIndex> for usize {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnyAtom(u8);
-    
+
 impl AnyAtom {
     pub fn tag(self) -> u8 { (self.0 & ATOM_TAG_MASK) as u8 }
 
@@ -137,15 +138,15 @@ impl Instr {
     fn u8_arg(self, index: usize) -> u8 { self.byte_arg(index) as u8 }
 
     fn reg_arg(self, index: usize) -> DestReg { DestReg(self.u8_arg(index)) }
-        
+
     fn src_reg_arg(self, index: usize) -> AnySrcReg { AnySrcReg(self.u8_arg(index)) }
-    
+
     fn atom_arg(self, index: usize) -> AnyAtom { AnyAtom(self.u8_arg(index)) }
-        
+
     fn short_arg(self) -> u32 { self.0 >> 16 }
-    
+
     fn offset_arg(self) -> Offset { Offset(self.short_arg() as i16) }
-        
+
     fn proc_arg(self) -> ProcIndex { ProcIndex(self.short_arg() as u16) }
 }
 
@@ -184,7 +185,7 @@ pub enum InstrView<'a> {
     FnInit { lvfn: SrcReg<&'a Closure>, index: Atom<usize>, value: AnyAtom },
     FnCode { dest: DestReg, rvfn: Atom<&'a Closure> },
     FnGet { dest: DestReg, rvfn: SrcReg<&'a Closure>, index: Atom<usize> },
-    
+
     ContNew { dest: DestReg, len: Atom<usize> },
     ContInitCode { lvcont: SrcReg<&'a Closure>, offset: Offset },
     ContInit { lvcont: SrcReg<&'a Closure>, index: Atom<usize>, value: AnyAtom },
@@ -192,17 +193,18 @@ pub enum InstrView<'a> {
     ContGet { dest: DestReg, rvcont: SrcReg<&'a Closure>, index: Atom<usize> },
 
     DenvNew { dest: DestReg },
-    
+
     RecNew { dest: DestReg, len: Atom<usize> },
     RecInitType { lvrec: SrcReg<&'a Record>, typ: AnyAtom },
     RecInit { lvrec: SrcReg<&'a Record>, index: Atom<usize>, value: AnyAtom },
     RecType { dest: DestReg, rvrec: Atom<&'a Record> },
     RecGet { dest: DestReg, rvrec: Atom<&'a Record>, index: Atom<usize> },
 
+    Br { offset: Offset },
     Brf { cond: Atom<bool>, offset: Offset },
-    
+
     IJmp { code: SrcReg<&'a CodePtr> },
-    
+
     Halt { value: AnyAtom },
 
     FLibOpen { dest: DestReg, path: Atom<&'a str> },
@@ -216,7 +218,7 @@ pub enum InstrView<'a> {
 impl Instr {
     pub fn decode(&self) -> InstrView {
         use self::InstrView::*;
-    
+
         match self.op() {
             MOV => Mov { dest: self.reg_arg(0), src: self.atom_arg(1) },
 
@@ -230,7 +232,7 @@ impl Instr {
                          arg2: From::from(self.atom_arg(2)) },
             IGE => IGe { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
                          arg2: From::from(self.atom_arg(2)) },
-                         
+
             INEG => INeg { dest: self.reg_arg(0), src: From::from(self.atom_arg(1)) },
             IADD => IAdd { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
                            arg2: From::from(self.atom_arg(2)) },
@@ -290,12 +292,13 @@ impl Instr {
             REC_GET   => RecGet { dest: self.reg_arg(0), rvrec: From::from(self.atom_arg(1)),
                                   index: From::from(self.atom_arg(2)) },
 
+            BR  => Br { offset: self.offset_arg() },
             BRF => Brf { cond: From::from(self.atom_arg(0)), offset: self.offset_arg() },
-                
+
             IJMP => IJmp { code: From::from(self.src_reg_arg(0)) },
-            
+
             HALT => Halt { value: self.atom_arg(0) },
-        
+
             FLIB_OPEN => FLibOpen { dest: self.reg_arg(0), path: From::from(self.atom_arg(1)) },
             FLIB_SYM => FLibSym { dest: self.reg_arg(0), lib: self.src_reg_arg(1),
                                   name: From::from(self.atom_arg(2)) },
@@ -306,8 +309,8 @@ impl Instr {
             FFN_INIT_CCONV => FFnInitCConv { ffn: From::from(self.src_reg_arg(0)),
                                              conv_name: From::from(self.atom_arg(1)) },
             FFN_CALL => FFnCall { ffn: From::from(self.src_reg_arg(0)) },
-                         
-            _ => unreachable!()
+
+            opcode => panic!("Unknown opcode 0x{:x}", opcode)
         }
     }
 }

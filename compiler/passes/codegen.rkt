@@ -41,6 +41,7 @@
     [(if ,[a?] (label ,n1) (label ,n2)) (guard (eq? n1 next-label)) `(brf ,a? ,n2)]
     [(if ,[a?] ,[x1] ,[x2]) (error "if has unimplementable destinations" ir)]))
 
+;; OPTIMIZE: Avoid emitting __br:s with zero offsets.
 (define-pass resolve : Asm (ir) -> ResolvedAsm ()
   (definitions
     (define (transfer-length transfer)

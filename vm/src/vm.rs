@@ -31,9 +31,9 @@ impl VM {
             procs: procs,
             curr_proc: curr_proc,
             pc: 0
-        }     
+        }
     }
-    
+
     fn fetch(&mut self) -> Result<Instr, VMError> {
         if let Some(&instr) = self.curr_proc.instrs.get(self.pc) {
             self.pc += 1;
@@ -44,7 +44,7 @@ impl VM {
     }
 
     fn reg(&self, index: AnySrcReg) -> &ValueRef { &self.regs[usize::from(index)] }
-    
+
     fn reg_mut(&mut self, index: DestReg) -> &mut ValueRef { &mut self.regs[usize::from(index)] }
 
     fn reg_t<'a, T>(&'a self, index: SrcReg<T>) -> Result<T, VMError> where T: TryFrom<&'a Value, Error=VMError> {
@@ -55,7 +55,7 @@ impl VM {
         match atom.tag() {
             0 => &self.regs[atom.index()],
             1 => &self.curr_proc.consts[atom.index()],
-            _ => unreachable!()     
+            _ => unreachable!()
         }
     }
 
@@ -66,18 +66,18 @@ impl VM {
     fn cob(&self, index: ProcIndex) -> &Gc<Proc> { &self.procs[usize::from(index)] }
 
     fn offset_pc(&self, offset: Offset) -> usize {
-        (self.pc as isize + isize::from(offset)) as usize     
+        (self.pc as isize + isize::from(offset)) as usize
     }
 
     pub fn run(&mut self) -> Result<ValueRef, VMError> {
         use code::InstrView::*;
-    
+
         loop {
             match self.fetch()?.decode() {
                 Mov { dest, src } => {
                     *self.reg_mut(dest) = self.atom(src).clone();
                 },
-                
+
                 IEq { dest, arg1, arg2 } => {
                     *self.reg_mut(dest) =
                         Gc::new(Value::Bool(self.atom_t(arg1)? == self.atom_t(arg2)?));
@@ -127,7 +127,7 @@ impl VM {
                     let b = self.atom_t(arg2)?;
                     *self.reg_mut(dest) = Gc::new(Value::Int((a % b + b) % b));
                 },
-                
+
                 BoxNew { dest } => {
                     *self.reg_mut(dest) = Gc::new(Value::new_box());
                 },
@@ -138,7 +138,7 @@ impl VM {
                     let value = self.atom_t(rvbox)?.value.borrow().clone();
                     *self.reg_mut(dest) = value;
                 },
-            
+
                 TupleNew { dest, len } => {
                     *self.reg_mut(dest) = Gc::new(Value::new_tuple(self.atom_t(len)?));
                 }
@@ -184,7 +184,7 @@ impl VM {
                         let index = self.atom_t(index)?;
                         f.env.borrow().get(index).ok_or(VMError::Bounds)?.clone()
                     };
-                    *self.reg_mut(dest) = v; 
+                    *self.reg_mut(dest) = v;
                 },
 
                 ContNew { dest, len } => {
@@ -210,7 +210,7 @@ impl VM {
                         let index = self.atom_t(index)?;
                         f.env.borrow().get(index).ok_or(VMError::Bounds)?.clone()
                     };
-                    *self.reg_mut(dest) = v; 
+                    *self.reg_mut(dest) = v;
                 },
 
                 DenvNew { dest } => { *self.reg_mut(dest) = Gc::new(Value::new_denv()); }
@@ -240,6 +240,7 @@ impl VM {
                     *self.reg_mut(dest) = value;
                 },
 
+                Br { offset } => { self.pc = self.offset_pc(offset) },
                 Brf { cond, offset } => {
                     if !self.atom_t(cond)? {
                         self.pc = self.offset_pc(offset);
@@ -252,7 +253,7 @@ impl VM {
                         (code.cob.clone(), code.pc)
                     };
                     self.curr_proc = new_proc;
-                    self.pc = new_pc; 
+                    self.pc = new_pc;
                 },
 
                 Halt { value } => {

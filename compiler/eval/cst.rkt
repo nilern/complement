@@ -147,6 +147,7 @@
     [(primcall ,p) (continue cont (primapply p '()))]
     [(primcall ,p ,e* ...)
      (Expr (car e*) (cont:$primargs cont lenv denv (cdr e*) p '()) lenv denv)]
+    [(macro ,n ,e* ...) (error "unimplemented")]
     [(block ,e) (Expr e cont lenv denv)]
     [(block ,s* ... ,e)
      (define-values (lbs dbs) (block-frames s*))

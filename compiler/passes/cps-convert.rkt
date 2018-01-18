@@ -174,25 +174,24 @@
           [($cont:halt)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define-values (label cont) (build-cont/atom cont-builder aexpr))
-           (emit-cont! cfg-builder label cont)])))
-
-    ;; Emit toplevel or fn body.
-    (define (body expr cont entry params)
-      (let* ([cont-builder (make-cont-builder entry params)]
-             [cfg-builder (make-cfg-builder entry)]
-             [transfer (Expr expr cont cont-builder cfg-builder)])
-        (build-cfg cfg-builder))))
+           (emit-cont! cfg-builder label cont)]))))
 
   (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
-    [(fn (,n* ...) ,e)
-     (define ret (gensym 'ret))
-     (define f `(fn ,(body e ($cont:return `(lex ,ret)) (gensym 'entry) (cons ret n*))))
-     (continue cont f #f cont-builder cfg-builder)]
+    [(fn (,n1* ...) ([,n2* ,fc*] ...) ,e)
+     (let ([f (let* ([ret (gensym 'ret)]
+                     [entry (gensym 'entry)]
+                     [cont ($cont:return `(lex ,ret))]
+                     [cfg-builder (make-cfg-builder entry)])
+                (for-each (cute Case <> <> cont cfg-builder) fc* n2*)
+                (Expr e cont (make-cont-builder entry (cons ret n1*)) cfg-builder)
+                `(fn ,(build-cfg cfg-builder)))])
+       (continue cont f #f cont-builder cfg-builder))]
     [(if ,e? ,e1 ,e2) (Expr e? ($cont:if cont e1 e2) cont-builder cfg-builder)]
     [(block ,e) (Expr e cont cont-builder cfg-builder)]
     [(block ,s ,s* ... ,e)
      (Stmt s ($cont:block cont s* e) cont-builder cfg-builder)]
     [(call ,e ,e* ...) (Expr e ($cont:fn cont e*) cont-builder cfg-builder)]
+    [(continue ,n ,e) (Expr e ($cont:return `(label ,n)) cont-builder cfg-builder)]
     [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
     [(primcall ,p ,e ,e* ...)
      (Expr e ($cont:primargs cont e* p '()) cont-builder cfg-builder)]
@@ -203,7 +202,13 @@
     [(def ,n ,e) (Expr e ($cont:def cont n) cont-builder cfg-builder)]
     [,e (Expr e cont cont-builder cfg-builder)])
 
-  (body ir ($cont:halt) (gensym 'main) '()))
+  (Case : Case (ir label cont cfg-builder) -> Cont ()
+    [(case (,n* ...) ,e) (Expr e cont (make-cont-builder label n*) cfg-builder)])
+
+  (let* ([entry (gensym 'main)]
+         [cfg-builder (make-cfg-builder entry)])
+    (Expr ir ($cont:halt) (make-cont-builder entry '()) cfg-builder)
+    (build-cfg cfg-builder)))
 
 ;; TODO: Don't mutate the census tables.
 ;; Remove critical edges.

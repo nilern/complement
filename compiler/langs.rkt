@@ -35,6 +35,7 @@
     (fn fc* ...)
     (call e e* ...)
     (primcall p e* ...)
+    (macro n e* ...)
     x
     (const c))
 
@@ -43,7 +44,8 @@
     e)
 
   (Case (fc)
-    (case (x* ...) e? e))
+    (case (x* ...) e? e)
+    (case x e? e))
 
   (Var (x)
     (lex n)
@@ -64,7 +66,9 @@
 
   (Case (fc)
     (- (case (x* ...) e? e))
-    (+ (case (n* ...) e? e)))
+    (- (case x e? e))
+    (+ (case (n* ...) e? e))
+    (+ (case n e? e)))
 
   (Var (x)
     (- (lex n))
@@ -75,11 +79,14 @@
 
   (Expr (e)
     (- (fn n fc ...))
-    (+ (fn (n* ...) e))
-    (+ (if e? e1 e2)))
+    (+ (fn (n1* ...) ([n2* fc*] ...) e))
+    (+ (if e? e1 e2))
+    (+ (continue n e)))
 
   (Case (fc)
-    (- (case (n* ...) e? e))))
+    (- (case (n* ...) e? e))
+    (- (case n e? e))
+    (+ (case (n* ...) e))))
 
 (define-language CPS
   (terminals

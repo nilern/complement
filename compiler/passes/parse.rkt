@@ -16,7 +16,7 @@
 ;;;; # Lexer
 
 (define-tokens payload-toks
-  (LEX DYN OP1 OP2 OP3 OP4 OP5 OP6 OP7 PRIMOP
+  (LEX DYN OP1 OP2 OP3 OP4 OP5 OP6 OP7 PRIMOP META
    STRING
    INT CHAR))
 (define-empty-tokens empty-toks
@@ -75,6 +75,8 @@
      (token-PRIMOP (string->symbol lexeme))]
     [(:: "$" (:+ (:or lower-letter upper-letter)))
      (token-DYN (string->symbol (substring lexeme 1)))]
+    [(:: "@" (:+ (:or lower-letter upper-letter)))
+     (token-META (string->symbol (substring lexeme 1)))]
     [(:+ (:or lower-letter upper-letter))
      (token-LEX (string->symbol lexeme))]
     [(:+ digit) (token-INT (string->number lexeme))]))
@@ -93,6 +95,12 @@
   (map unwrap-var-expr app))
 
 (define (parse-decls decls)
+  (define (make-case params cond body)
+    (with-output-language (Cst Case)
+      (if (list? params)
+        `(case (,params ...) ,cond ,body)
+        `(case ,params ,cond ,body))))
+
   (if ($fn-header? (car decls))
     (let loop ([decls decls]
                [paramss '()]
@@ -106,8 +114,7 @@
                  (cons cond conds)
                  (cons (extract-block (cons stmt stmts)) bodies)))]
         ['() (with-output-language (Cst Expr)
-               `(fn (case (,(reverse paramss) ...) ,(reverse conds)
-                      ,(reverse bodies)) ...))]))
+               `(fn ,(reverse (map make-case paramss conds bodies)) ...))]))
     (extract-block decls)))
 
 (define (extract-block decls)
@@ -187,7 +194,8 @@
                  [(list expr) expr]
                  [(cons f args) (with-output-language (Cst Expr)
                                   `(call ,f ,args ...))])]
-        [(primapp) $1])
+        [(primapp) $1]
+        [(macro) $1])
 
       (app
         [(simple) (list $1)]
@@ -197,6 +205,11 @@
         [(PRIMOP) (with-output-language (Cst Expr) `(primcall ,$1))]
         [(PRIMOP app) (with-output-language (Cst Expr)
                         `(primcall ,$1 ,(reverse $2) ...))])
+
+      (macro
+        [(META)     (with-output-language (Cst Expr) `(macro ,$1))]
+        [(META app) (with-output-language (Cst Expr)
+                      `(macro ,$1 ,(reverse $2) ...))])
 
       (simple
         [(LPAREN expr RPAREN) $2]
@@ -215,11 +228,16 @@
         [(block-decl-list SEMICOLON block-decl) (cons $3 $1)])
 
       (block-decl
-        [(app => stmt) ($fn-header (app->var-list (reverse $1))
-                                   (with-output-language (Cst Expr) `(const #t))
-                                   $3)]
-        [(app \| expr => stmt) ($fn-header (app->var-list (reverse $1)) $3 $5)]
+        [(params => stmt) ($fn-header $1 (with-output-language (Cst Expr) `(const #t)) $3)]
+        [(params \| expr => stmt) ($fn-header $1 $3 $5)]
         [(stmt) $1])
+
+      (params
+        [(app)   (app->var-list (reverse $1))]
+        [(macro) (nanopass-case (Cst Expr) $1
+                   [(macro ,n ,x) (guard (eq? n 'args)) x]
+                   [(macro ,n ,e* ...) (error "illegal macro call as parameter list")]
+                   [else (error "unreachable")])])
 
       (var
         [(LEX)               (with-output-language (Cst Var) `(lex ,$1))]
