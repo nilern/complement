@@ -1,0 +1,26 @@
+libc = __flibOpen "/usr/lib/libc.so.6"; # Obviously, this path isn't portable.
+exit = {
+  # HACK: Int is used as the return type instead of void. Doesn't really matter
+  #       since it actually doesn't return at all:
+  foreignExit = __ffnNew (__flibSym libc "exit") (__tupleNew 0) 0;
+  { @args args => __ffnCall foreignExit args }
+};
+getchar = {
+  foreignGetchar = __ffnNew (__flibSym libc "getchar") (__tupleNew) 0;
+  { @args args => __ffnCall foreignGetchar () } # HACK: args
+};
+putchar = {
+  # HACK: Actually returns void but that is unimplemented ATM:
+  foreignPutchar = __ffnNew (__flibSym libc "putchar") (__tupleNew 0) 0;
+  { @args args => __ffnCall foreignPutchar args } # HACK: args
+};
+EOF = __iNeg 1; # HACK: Negative number literals are unimplemented ATM
+loop = {
+  c | __iEq c EOF => ();
+  c => {
+    putchar c;
+    loop (getchar ())
+  }
+};
+loop (getchar ());
+exit 0

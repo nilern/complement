@@ -156,7 +156,7 @@
       (write-bytes (integer->integer-bytes n 8 #f) out))
 
     (define (serialize-instr instr out)
-      (write-bytes (integer->integer-bytes instr 4 #f) out))
+      (write-bytes (integer->integer-bytes instr 4 #t) out))
 
     (define (serialize-raw-string str out)
       (serialize-usize (string-length str) out)

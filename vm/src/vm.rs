@@ -326,7 +326,7 @@ impl VM {
                             let res: u64 = match unsafe { (*res_type).size } {
                                 1 => unimplemented!(),
                                 2 => unimplemented!(),
-                                4 => unimplemented!(),
+                                4 => unsafe { cif.call(ffn.fn_ptr, args.as_slice()) }, // HACK
                                 8 => unsafe { cif.call(ffn.fn_ptr, args.as_slice()) },
                                 _ => unimplemented!()
                             };
