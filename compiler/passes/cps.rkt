@@ -49,6 +49,7 @@
     [(continue ,x ,a* ...) (Callee x) (for-each Atom a*)]
     [(if ,a? ,x1 ,x2) (Atom a?) (Callee x1) (Callee x2)]
     [(call ,x1 ,x2 ,a* ...) (Callee x1) (Var x2) (for-each Atom a*)]
+    [(ffncall ,x1 ,x2 ,a* ...) (Callee x1) (Var x2) (for-each Atom a*)]
     [(halt ,a) (Atom a)])
 
   (Expr : Expr (ir) -> * ()

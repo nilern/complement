@@ -17,8 +17,10 @@
   (definitions
     ;; Continuation frames:
     (struct $cont:fn (cont arges) #:transparent)
+    (struct $cont:ffn (cont arges) #:transparent)
     (struct $cont:if (cont then else) #:transparent)
     (struct $cont:args (cont arges callee argas) #:transparent)
+    (struct $cont:ffnargs (cont arges callee argas) #:transparent)
     (struct $cont:primargs (cont arges op argas) #:transparent)
     (struct $cont:block (cont stmts expr) #:transparent)
     (struct $cont:def (cont name) #:transparent)
@@ -118,6 +120,11 @@
       (with-output-language (CPS Transfer)
         (build-cont/transfer cont-builder `(call ,f ,label ,args ...))))
 
+    ;; Like build-cont/call but for foreign function calls.
+    (define (build-cont/ffncall cont-builder f label denv args)
+      (with-output-language (CPS Transfer)
+        (build-cont/transfer cont-builder `(ffncall ,f ,label ,denv ,args))))
+
     (with-output-language (CPS Expr)
       ;; Emit the code for `cont` and continuing into it with the value of `expr` and using
       ;; `name-hint` to trivialize `expr` when necessary.
@@ -131,6 +138,9 @@
           [($cont:fn cont* (cons arge arges))
            (define aexpr (trivialize! cont-builder name-hint expr))
            (Expr arge ($cont:args cont* arges aexpr '()) cont-builder cfg-builder)]
+          [($cont:ffn cont* (cons arge arges))
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (Expr arge ($cont:ffnargs cont* arges aexpr '()) cont-builder cfg-builder)]
           [($cont:if cont* then-expr else-expr)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define then-label (gensym 'k))
@@ -150,6 +160,15 @@
           [($cont:args cont* (cons arge arges) f argas)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (Expr arge ($cont:args cont* arges f (cons aexpr argas))
+                 cont-builder cfg-builder)]
+          [($cont:ffnargs cont* '() f (list denv))
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (define cont*-label (trivialize-cont! cont* cfg-builder))
+           (let-values ([(label cont) (build-cont/ffncall cont-builder f cont*-label denv aexpr)])
+             (emit-cont! cfg-builder label cont))]
+          [($cont:ffnargs cont* (cons arge arges) f argas)
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (Expr arge ($cont:ffnargs cont* arges f (cons aexpr argas))
                  cont-builder cfg-builder)]
           [($cont:primargs cont* '() op argas)
            (define aexpr (trivialize! cont-builder name-hint expr))
@@ -192,6 +211,7 @@
      (Stmt s ($cont:block cont s* e) cont-builder cfg-builder)]
     [(call ,e ,e* ...) (Expr e ($cont:fn cont e*) cont-builder cfg-builder)]
     [(continue ,n ,e) (Expr e ($cont:return `(label ,n)) cont-builder cfg-builder)]
+    [(ffncall ,e1 ,e2 ,e3) (Expr e1 ($cont:ffn cont (list e2 e3)) cont-builder cfg-builder)]
     [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
     [(primcall ,p ,e ,e* ...)
      (Expr e ($cont:primargs cont e* p '()) cont-builder cfg-builder)]
@@ -318,6 +338,9 @@
     [(call ,x1 ,x2 ,a* ...)
      `(call ,(Callee x1 kenv cfg-builder) ,(Var x2 kenv cfg-builder)
             ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
+    [(ffncall ,x1 ,x2 ,a* ...)
+     `(ffncall ,(Callee x1 kenv cfg-builder) ,(Var x2 kenv cfg-builder)
+               ,(map (cute Atom <> kenv cfg-builder) a*) ...)]
     [(halt ,a) `(halt ,(Atom a kenv cfg-builder))])
 
   (Atom : Atom (ir kenv cfg-builder) -> Atom ()

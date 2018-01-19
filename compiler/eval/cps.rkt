@@ -98,6 +98,7 @@
      (apply-cont (Var (match (Atom a? env kenv) [#t x1] [#f x2]) env kenv) kenv '())]
     [(call ,x1 ,x2 ,a* ...)
      (apply-fn (Var x1 env kenv) (cons (Var x2 env kenv) (map (cute Atom <> env kenv) a*)))]
+    [(ffncall ,x1 ,x2 ,a* ...) (error "unimplemented")]
     [(halt ,a) (Atom a env kenv)])
 
    (Atom : Atom (ir env kenv) -> * ()

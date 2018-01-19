@@ -35,6 +35,7 @@
     (fn fc* ...)
     (call e e* ...)
     (primcall p e* ...)
+    (ffncall e1 e2)
     (macro n e* ...)
     x
     (const c))
@@ -57,6 +58,8 @@
   (Expr (e)
     (- (fn fc* ...))
     (+ (fn n fc ...))
+    (- (ffncall e1 e2))
+    (+ (ffncall e1 e2 e3))
     (- x)
     (+ n))
 
@@ -108,6 +111,7 @@
     (continue x a* ...)
     (if a? x1 x2)
     (call x1 x2 a* ...)
+    (ffncall x1 x2 a* ...) ; TODO: x1 -> n, x2 -> x
     (halt a))
 
   (Expr (e)
@@ -137,7 +141,9 @@
   (Transfer (t)
     (- (continue x a* ...))
     (- (call x1 x2 a* ...))
-    (+ (goto x a* ...)))
+    (+ (goto x a* ...))
+    (- (ffncall x1 x2 a* ...))
+    (+ (ffncall x a* ...))) ; TODO: x -> n
 
   (Expr (e)
     (- (fn blocks)))
@@ -184,7 +190,9 @@
 
   (Transfer (t)
     (- (goto x a* ...))
-    (+ (goto x))))
+    (+ (goto x))
+    (- (ffncall x a* ...))
+    (+ (ffncall x)))) ; TODO. x -> n
 
 (define (InstrCPCPS-Atom-deconstruct atom)
   (nanopass-case (InstrCPCPS Atom) atom

@@ -37,8 +37,8 @@
     (__br __brf)
     (__jmp __ijmp)
     (__halt __raise)
-    
-    (__flibOpen __flibSym __ffnNew __ffnInitType)))
+
+    (__flibOpen __flibSym __ffnNew __ffnInitType __ffnInitCConv __ffnCall)))
 
 ;; A map from instruction names to byte encodings.
 (define op-encodings
@@ -149,7 +149,8 @@
            (ash arg-atom-shift)
            (bit-or (encode-op op)))]
       [((or '__boxSet
-            '__tupleInit '__fnInit '__contInit '__recInitType '__recInit)
+            '__tupleInit '__fnInit '__contInit '__recInitType '__recInit
+            '__ffnInitCConv)
         (cons dest args))
        (define dest-reg
          (nanopass-case (ConstPoolAsm Atom) dest
@@ -176,6 +177,11 @@
                      (bit-or (encode-op '__ijmp)))]
        [(proc ,n ,i) (~> (ash i arg-index-shift)
                          (bit-or (encode-op '__tcall)))])]
+    [('__ffnCall (list x))
+     (nanopass-case (ConstPoolAsm Var) x
+       [(reg ,i) (~> (ash i arg-index-shift)
+                     (bit-or (encode-op '__ffnCall)))]
+       [else (error "unreachable")])]
     [('__halt (list a))
      (~> (ash (encode-arg-atom a) arg-atom-shift)
          (bit-or (encode-op op)))]))

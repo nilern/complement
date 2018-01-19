@@ -214,7 +214,8 @@
     [(fn ,fc* ...)
      (define denv-name (gensym 'denv))
      `(fn ,denv-name ,(map (cute Case <> denv-name) fc*) ...)]
-    [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)])
+    [(call ,[e] ,[e*] ...) `(call ,e ,(cons denv-name e*) ...)]
+    [(ffncall ,[e1] ,[e2]) `(ffncall ,e1 ,denv-name ,e2)])
 
   (Stmt : Stmt (cst denv-name) -> Stmt ()
     [(def (lex ,n) ,[e]) `(def ,n ,e)]

@@ -49,6 +49,9 @@
       [(goto ,x ,a* ...)
        (Callee x label ltab)
        (for ([atom a*]) (Atom atom label ltab))]
+      [(ffncall ,x ,a* ...)
+       (Callee x label ltab)
+       (for ([atom a*]) (Atom atom label ltab))]
       [(if ,a? ,x1 ,x2)
        (Atom a? label ltab)
        (Callee x1 label ltab)

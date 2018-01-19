@@ -204,7 +204,12 @@
       (primapp
         [(PRIMOP) (with-output-language (Cst Expr) `(primcall ,$1))]
         [(PRIMOP app) (with-output-language (Cst Expr)
-                        `(primcall ,$1 ,(reverse $2) ...))])
+                        (case $1
+                          [(__ffnCall)
+                           (match (reverse $2)
+                             [(list callee args) `(ffncall ,callee ,args)]
+                             [_ (error "wrong number of arguments to __ffnCall")])]
+                          [else `(primcall ,$1 ,(reverse $2) ...)]))])
 
       (macro
         [(META)     (with-output-language (Cst Expr) `(macro ,$1))]

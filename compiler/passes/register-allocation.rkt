@@ -93,6 +93,8 @@
   (Transfer : Transfer (ir kenv cont-acc) -> * ()
     [(goto ,x ,a* ...)
      (freevars+luses (Callee x kenv cont-acc) (set-union (Var x) (arglist a*)))]
+    [(ffncall ,x ,a* ...)
+     (freevars+luses (Callee x kenv cont-acc) (set-union (Var x) (arglist a*)))]
     [(if ,a? ,x1 ,x2)
      (freevars+luses (set-union (Callee x1 kenv cont-acc) (Callee x2 kenv cont-acc))
                      (set-union (Atom a?) (Var x1) (Var x2)))]
@@ -232,6 +234,7 @@
   ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
   (Transfer : Transfer (ir env) -> Transfer ()
     [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+    [(ffncall ,x ,a* ...) `(ffncall ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
 
   (Atom : Atom (ir env) -> Atom ()
@@ -399,6 +402,7 @@
      (emit-stmt! stmt-acc name reg `(primcall3 ,p ,(Atom a1) ,(Atom a2) ,(Atom a3)))]
     [,a (emit-stmt! stmt-acc name reg (Atom a))])
 
+  ;; TODO: Factor out the contents of the goto and ffncall cases.
   ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
   (Transfer : Transfer (ir kenv reg-pool stmt-acc) -> Transfer ()
     [(goto ,x ,a* ...)
@@ -410,6 +414,15 @@
          (emit-move! stmt-acc dest src)
          (emit-moves)))
      `(goto ,callee)]
+    [(ffncall ,x ,a* ...)
+     (define-values (callee move-graph) (make-move-graph kenv (Var x) (map Atom a*)))
+     (let emit-moves ()
+       (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
+         (emit-move! stmt-acc dest src))
+       (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
+         (emit-move! stmt-acc dest src)
+         (emit-moves)))
+     `(ffncall ,callee)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a?) ,(Var x1) ,(Var x2))]
     [(halt ,a) `(halt ,(Atom a))])
 

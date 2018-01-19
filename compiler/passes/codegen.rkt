@@ -38,6 +38,7 @@
     [(goto (label ,n)) (guard (eq? n next-label)) #f]
     [(goto (label ,n)) `(br ,n)]
     [(goto ,[x]) `(jmp ,x)]
+    [(ffncall ,[x]) `(ffncall ,x)]
     [(if ,[a?] (label ,n1) (label ,n2)) (guard (eq? n1 next-label)) `(brf ,a? ,n2)]
     [(if ,[a?] ,[x1] ,[x2]) (error "if has unimplementable destinations" ir)]))
 
@@ -216,4 +217,5 @@
     [(br ,n ,i)      (serialize-instr (bytecode:encode-transfer '__br i) out)]
     [(jmp ,x)        (serialize-instr (bytecode:encode-transfer '__jmp x) out)]
     [(brf ,a? ,n ,i) (serialize-instr (bytecode:encode-transfer '__brf a? i) out)]
+    [(ffncall ,x)    (serialize-instr (bytecode:encode-transfer '__ffnCall x) out)]
     [(halt ,a)       (serialize-instr (bytecode:encode-transfer '__halt a) out)]))

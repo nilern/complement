@@ -84,6 +84,7 @@
     [(goto ,x ,a* ...)
      (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv
            (map (cute Atom <> env kenv fenv) a*))]
+    [(ffncall ,x ,a* ...) (error "unimplemented")]
     [(if ,a? ,x1 ,x2)
      (define x
        (match (Atom a? env kenv fenv)
