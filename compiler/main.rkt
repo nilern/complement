@@ -2,7 +2,6 @@
 
 ;;; TODO: Primop infrastructure for evaluators (and assembly?)
 ;;; TODO: Missing evaluators
-;;; TODO: FFI calls
 
 (module+ main
   (require racket/match

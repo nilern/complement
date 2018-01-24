@@ -4,12 +4,15 @@
          while when-let if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
+;; Exception type for unbound variables in interpreters.
 (struct exn:unbound exn:fail ())
 
+;; Make an immutable hash with `ks` as the keys and `vs` as the values.
 (define (zip-hash ks vs)
   (for/hash ([k ks] [v vs])
     (values k v)))
 
+;; Return two values: the keys and the values of the hash `kvs` as lists.
 (define (unzip-hash kvs)
   (define-values (ks vs)
     (for/fold ([ks '()] [vs '()])
@@ -17,6 +20,8 @@
       (values (cons k ks) (cons v vs))))
   (values (reverse ks) (reverse vs)))
 
+;; Apply `f` to each element of `coll` and create a hash where the keys are the distinct values
+;; of those applications and the value behind a key is a list of the elements that produced the key.
 (define (clj-group-by f coll)
   (define groups
     (for/fold ([groups (hash)])
@@ -25,6 +30,7 @@
   (for/hash ([(k v) groups])
     (values k (reverse v))))
 
+;; While loop
 (define-syntax while
   (syntax-rules ()
     [(while cond stmts ...)
@@ -33,6 +39,7 @@
          stmts ...
          (loop)))]))
 
+;; Like `when`, but the value of the condition is bound to `name` in `stmts`.
 (define-syntax when-let
   (syntax-rules ()
     [(when-let (name condition)
@@ -41,6 +48,8 @@
        (when name
          stmts ...))]))
 
+;; Evaluate `prod` and bind the returned values to `name` and `names`. If `name` is not #f, evaluate
+;; the `then` branch. Else evaluate the `otherwise` branch.
 (define-syntax if-let-values
   (syntax-rules ()
     [(if-let-values [(name names ...) prod]
@@ -51,6 +60,7 @@
          then
          otherwise))]))
 
+;; Is to `if-let-values` what `when` is to `if`.
 (define-syntax when-let-values
   (syntax-rules ()
     [(when-let-values [(name names ...) prod]
@@ -59,6 +69,8 @@
        (when name
          stmts ...))]))
 
+;; Evaluate `prod` and bind the returned values to `name` and `names`. If `name` is not #f, evaluate
+;; `stmts` and repeat, just like `while`.
 (define-syntax while-let-values
   (syntax-rules ()
     [(while-let-values [(name names ...) prod]
