@@ -13,8 +13,10 @@
          (prefix-in cfg: "../cfg.rkt")
          (only-in "../util.rkt" zip-hash unzip-hash))
 
+;; Compute the control flow graph of a (CPS CFG) as a hash from labels to callers and callees.
 (define-pass make-cfg : CPS (ir) -> * ()
   (definitions
+    ;; Create an empty entry.
     (define (make-entry)
       (make-hash `((callers . ,(mutable-set)) (callees . ,(mutable-set))))))
 
@@ -49,18 +51,25 @@
          (hash-ref 'callers)
          (set-add! label))]))
 
+;; Compute the free variables of every reachable cont in a (CPS CFG).
 (define-pass analyze-closures : CPS (ir) -> * ()
   (definitions
+    ;; Create an empty entry.
     (define (make-entry) (make-hash (list (cons 'freevars (mutable-set)))))
 
+    ;; Get the free variables of `label` from `table`.
     (define (freevars table label)
       (~> (hash-ref table label)
           (hash-ref 'freevars)))
 
+    ;; Remember that `name`, a variable from a dominator of `label`, was used in the cont called
+    ;; `label`.
     (define (use-clover! table label name)
       (~> (freevars table label)
           (set-add! name)))
 
+    ;; Add all the free variables of `src-label` to the free variables of `label` (unless they are
+    ;; defined the cont called `label` as recorded in `env`).
     (define (transitively! table label env src-label)
       (define fvs (freevars table label))
       (for ([fv (freevars table src-label)]
@@ -135,17 +144,22 @@
     (CFG ir stats visited)
     stats))
 
+;; Closure convert a (CPS CFG) using `stats` for the free variables (as computed by
+;; `analyze-closures`) and `ltab` for the usage counts (as computed by `cps:census`).
 (define-pass closure-convert : CPS (ir stats ltab) -> CPCPS ()
   (definitions
+    ;; A parameter list declaring the new names (found via `env`) of `freevars`.
     (define (fv-params env freevars)
       (for/list ([fv freevars])
         (hash-ref env fv fv)))
 
+    ;; An argument list using the new names (found via `env`) of `freevars`.
     (define (fv-lexen env freevars)
       (with-output-language (CPCPS Atom)
         (for/list ([fv freevars])
           `(lex ,(hash-ref env fv fv)))))
 
+    ;; A definition list loading free variables from a closure into the new names of `freevars`.
     (define (fv-loads fn-entry? closure env freevars)
       (with-output-language (CPCPS Stmt)
         (for/list ([(fv i) (in-indexed freevars)])
@@ -153,17 +167,23 @@
             `(def ,(hash-ref env fv fv) (primcall __fnGet (lex ,closure) (const ,i)))
             `(def ,(hash-ref env fv fv) (primcall __contGet (lex ,closure) (const ,i)))))))
 
+    ;; A control flow graph builder.
     (struct $cont-acc (conts entry-point return-points))
 
+    ;; Create a new CFG builder for a CFG rooted at `entry`.
     (define (make-cont-acc entry)
       ($cont-acc (make-hash) entry (mutable-set)))
 
+    ;; Add `cont` into `cont-acc` under `label`. `interface` can be 'closed (uses closure records),
+    ;; 'lifted (lambda-lifted) of 'dominated (all free variables are defined locally in dominators).
+    ;; If it is 'closed, add `label` to the entry points of the CFG to be built.
     (define (emit-cont! cont-acc interface label cont)
       (match-define ($cont-acc conts entry return-points) cont-acc)
       (when (and (eq? interface 'closed) (not (eq? label entry)))
         (set-add! return-points label))
       (hash-set! conts label cont))
 
+    ;; Build the CFG.
     (define build-cfg
       (with-output-language (CPCPS CFG)
         (match-lambda
@@ -305,12 +325,16 @@
     (define-values (fn-names fns) (unzip-hash fn-acc))
     `(prog ([,fn-names ,fns] ...) ,entry)))
 
+;; Apply shrinking transformations to a CPCPS IR. At the moment this means constant and copy
+;; propagation, including removal of parameters that have the same atom value at all calls.
 (define-pass shrink : CPCPS (ir ltabs) -> CPCPS ()
   (definitions
+    ;; Emit a statement into `stmt-acc`; defines `name` unless name = #f.
     (define (emit-stmt! stmt-acc name expr)
       (with-output-language (CPCPS Stmt)
         (gvector-add! stmt-acc (if name `(def ,name ,expr) expr))))
 
+    ;; A list of the argument lists that `caller` calls `callee` with.
     (define (ltab-arglists ltab caller callee)
       (nanopass-case (CPCPS Transfer) (hash-ref (hash-ref ltab caller) 'transfer)
         [(goto (label ,n) ,a* ...) (if (eq? n callee) (list a*) '())]
@@ -326,6 +350,7 @@
         [(if ,a? ,x1 ,x2) '()]
         [(halt ,a) '()]))
 
+    ;; If every one of `atoms` is the same, return that value. Else return #f.
     (define (join-atoms atoms)
       (define (join2 atom1 atom2)
         (if (equal? atom1 atom2) atom1 #f))
@@ -333,6 +358,7 @@
         ['() #f]
         [(cons atom atoms) (foldl join2 atom atoms)]))
 
+    ;; Shrink the components of a call, not passing unused arguments.
     (define (shrink-call label keep-indices callee args)
       (nanopass-case (CPCPS Var) callee
         [(lex ,n) (values callee args)]
@@ -345,6 +371,10 @@
                    args))]
         [(proc ,n) (values callee args)]))
 
+    ;; Process continuation parameters of `label`. Return the new parameter list and a replacement
+    ;; environment. If a parameter always has the same atom value, it is not returned in the param
+    ;; list but put into the replacement env instead. Also update the calls stored in `ltab` to not
+    ;; pass arguments for the skipped parameters.
     (define (params! ltab label params)
       (let* ([callers (hash-ref (hash-ref ltab label) 'callers)]
              [arglists (append-map (cute ltab-arglists ltab <> label) callers)]

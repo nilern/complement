@@ -1,25 +1,30 @@
 #lang racket/base
 
-;; Bidirectional direct-call graph of a CFG
 (module label-table racket/base
   (provide make)
   (require (only-in srfi/26 cute) nanopass/base
           "../langs.rkt")
 
- ;;; FIXME: callers and callees should disallow duplicates
+  ;;; FIXME: callers and callees should disallow duplicates
 
+  ;; Create an empty entry.
   (define (make-entry)
     (make-hash '((escapes? . #f) (callers . ()) (callees . ()))))
 
+  ;; Like `hash-ref` but creates an empty entry with `make-entry` and returns that if one is not
+  ;; already in place.
   (define ref! (cute hash-ref! <> <> make-entry))
 
+  ;; Record the fact that `caller` called `callee`.
   (define (calls! ltab caller callee)
     (hash-update! (ref! ltab caller) 'callees (cute cons callee <>))
     (hash-update! (ref! ltab callee) 'callers (cute cons caller <>)))
 
+  ;; Record the fact that `label` escapes (is used in non-callee position).
   (define (escapes! ltab label)
     (hash-set! (ref! ltab label) 'escapes? #t))
 
+  ;; Bidirectional direct-call graph of a (CPCPS Program).
   (define-pass make : CPCPS (ir) -> * ()
     (Program : Program (ir) -> * ()
       [(prog ([,n* ,blocks*] ...) ,n)
