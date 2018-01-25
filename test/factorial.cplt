@@ -1,0 +1,9 @@
+factorial = {
+    fact = {
+        acc n | __iEq n 0 => acc;
+        acc n => fact (__iMul n acc) (__iSub n 1)
+    };
+    {n => fact 1 n}
+};
+
+factorial 5
