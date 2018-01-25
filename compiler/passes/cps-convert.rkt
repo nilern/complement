@@ -10,8 +10,6 @@
          "../langs.rkt"
          (only-in "../util.rkt" zip-hash))
 
-;; TODO: __raise doesn't return so turning it into a Transfer (just like we did
-;;       with __halt) should compress the output of this somewhat
 ;; CPS-convert the AST.
 (define-pass cps-convert : Ast (ir) -> CPS ()
   (definitions
@@ -101,19 +99,20 @@
                              ,(gvector->list stmts) ...
                              ,transfer))))
 
-    ;; TODO: This makes no sense as an abstraction, split into multiple fns.
-    ;; Build the continuation using the information in `cont-builder` and with the value of `aexpr`
-    ;; halting if `labels` is empty
-    ;; calling label if labels is `(,label)
-    ;; calling label1 if true and label2 if false when label is `(,label1 ,label2)
-    (define (build-cont/atom cont-builder aexpr . labels)
+    ;; Build a cont that ends in an unconditional jump to another continuation.
+    (define (build-cont/continue cont-builder label aexpr)
       (with-output-language (CPS Transfer)
-        (build-cont/transfer
-         cont-builder
-         (match labels
-           ['() `(halt ,aexpr)]
-           [(list label) `(continue ,label ,aexpr)]
-           [(list label1 label2) `(if ,aexpr ,label1 ,label2)]))))
+        (build-cont/transfer cont-builder `(continue ,label ,aexpr))))
+
+    ;; Build a cont that ends in a conditional jump.
+    (define (build-cont/if cont-builder aexpr label1 label2)
+      (with-output-language (CPS Transfer)
+        (build-cont/transfer cont-builder `(if ,aexpr ,label1 ,label2))))
+
+    ;; Build a cont that ends in an exit with a value.
+    (define (build-cont/halt cont-builder aexpr)
+      (with-output-language (CPS Transfer)
+        (build-cont/transfer cont-builder `(halt ,aexpr))))
 
     ;; Build a cont that ends in an error being raised.
     (define (build-cont/raise cont-builder aexpr)
@@ -151,8 +150,8 @@
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define then-label (gensym 'k))
            (define else-label (gensym 'k))
-           (let-values ([(label cont) (build-cont/atom cont-builder aexpr `(label ,then-label)
-                                                                          `(label ,else-label))])
+           (let-values ([(label cont) (build-cont/if cont-builder aexpr `(label ,then-label)
+                                                                        `(label ,else-label))])
              (emit-cont! cfg-builder label cont))
            (define join ($cont:return (trivialize-cont! cont* cfg-builder)))
            (Expr then-expr join (make-cont-builder then-label '()) cfg-builder)
@@ -194,7 +193,7 @@
            (continue cont* expr name cont-builder cfg-builder)]
           [($cont:return ret)
            (define aexpr (trivialize! cont-builder name-hint expr))
-           (define-values (label cont) (build-cont/atom cont-builder aexpr ret))
+           (define-values (label cont) (build-cont/continue cont-builder ret aexpr))
            (emit-cont! cfg-builder label cont)]
           [($cont:raise)
            (define aexpr (trivialize! cont-builder name-hint expr))
@@ -202,7 +201,7 @@
            (emit-cont! cfg-builder label cont)]
           [($cont:halt)
            (define aexpr (trivialize! cont-builder name-hint expr))
-           (define-values (label cont) (build-cont/atom cont-builder aexpr))
+           (define-values (label cont) (build-cont/halt cont-builder aexpr))
            (emit-cont! cfg-builder label cont)]))))
 
   (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
