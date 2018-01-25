@@ -87,7 +87,7 @@
                        (intersect*
                          (for/list ([label (hash-ref (hash-ref rev-cont-calls label) 'callers)])
                            (hash-ref builder label)))])
-                  ;; changed := dom-chain-hash* = dom-chain-hash:
+                  ;; if dom-chain-hash* != dom-chain-hash then changed := true:
                   (for ([(entry dom-chain*) dom-chain-hash*])
                     (unless (and (hash-has-key? dom-chain-hash entry)
                                  (olset= dom-chain* (hash-ref dom-chain-hash entry)))

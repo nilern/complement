@@ -6,8 +6,8 @@
          Asm ResolvedAsm ConstPoolAsm)
 (require nanopass/base)
 
-;;; TODO: Make primcalls "correct by construction"
 ;;; TODO: restrict (call e e* ...)
+;;; TODO: Make primcalls "correct by construction"
 
 (define (name? name)
   (and (symbol? name)
@@ -107,6 +107,7 @@
     (def n e)
     e)
 
+  ;; TODO: Merge `ffncall` with `call` and `raise` with `halt`.
   (Transfer (t)
     (continue x a* ...)
     (if a? x1 x2)

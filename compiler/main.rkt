@@ -74,6 +74,8 @@
       'collect-constants   (pass '(resolve) collect-constants #f)
       'assemble            (pass '(collect-constants) (cute assemble <> output) #f)))
 
+  ;; OPTIMIZE: Prune results from `results` when they will not be needed any longer.
+  ;;
   ;; Post-order walk of the pass dependency DAG rooted at the pass called `pass-name`. A pass is
   ;; visited by calling `f` on the pass name, the pass value and the results of its dependencies.
   (define (perform-upto f pass-name)

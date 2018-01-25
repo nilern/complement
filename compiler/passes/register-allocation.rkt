@@ -123,9 +123,12 @@
 
   (CFG ir))
 
+;; OPTIMIZE: A lot of linear searches here.
 (module reg-pool racket/base
   (provide make count preallocate! allocate! deallocate! deallocate-luses!)
-  (require racket/match racket/list (only-in srfi/26 cute))
+  (require racket/match racket/list racket/set
+           (only-in srfi/26 cute) (only-in srfi/1 find)
+           (only-in "../util.rkt" if-let))
 
   (struct $reg-pool ([stack #:mutable] [capacity #:mutable]))
 
@@ -154,10 +157,21 @@
         (set-$reg-pool-stack! reg-pool (filter-not (cute eq? <> reg) stack))
         (error (format "unable to preallocate ~s" reg)))))
 
-  (define (allocate! reg-pool)
+  (define (allocate! reg-pool hints)
+    ;; Ensure that every hinted-at register exists:
+    (for ([reg hints])
+      (unless (< reg ($reg-pool-capacity reg-pool))
+        (grow! reg-pool (+ reg 1))))
+    ;; Ensure that we always have some register to return:
     (when (null? ($reg-pool-stack reg-pool))
       (grow! reg-pool (+ ($reg-pool-capacity reg-pool) 1)))
-    (pop! reg-pool))
+    (let ([stack ($reg-pool-stack reg-pool)])
+      (if-let [res (find (cute set-member? hints <>) stack)]
+        (begin
+          ;; We were able to satisfy some hint.
+          (set-$reg-pool-stack! reg-pool (filter-not (cute eq? <> res) stack))
+          res)
+        (pop! reg-pool))))
 
   (define deallocate! push!)
 
@@ -168,8 +182,64 @@
 (require (prefix-in reg-pool: (submod "." reg-pool)))
 
 ;; TODO: Return multiple values instead of mutating `liveness` and `dom-forests`.
-;; TODO: Improve targeting (to reduce shuffling at callsites) with some sort of hinting mechanism
 (define-pass allocate : RegisterizableCPCPS (ir ltabs livenesses dom-forests) -> RegCPCPS ()
+  (definitions
+    ;; Get the parameter list of a (RegisterizableCPCPS Cont).
+    (define (cont-params cont)
+      (nanopass-case (RegisterizableCPCPS Cont) cont
+        [(cont (,n* ...) ,s* ... ,t) n*]))
+
+    ;; Make an empty hint table.
+    (define (make-hint-table) (make-hash))
+
+    ;; Add hints due to the fact that `label` gets called with args.
+    (define (interim-hint! hint-table env label args)
+      (hash-set! hint-table label
+        (for/list ([hints (hash-ref hint-table label empty-hint-env)]
+                   [arg args])
+          (nanopass-case (RegisterizableCPCPS Atom) arg
+            [(lex ,n) (set-add hints (hash-ref env n))]
+            [else hints]))))
+
+    ;; Replace hints of `label` since registers have been allocated for its parameters.
+    (define (final-hint! hint-table label param-regs)
+      (hash-set! hint-table label (map set param-regs)))
+
+    ;; The empty hint env.
+    (define empty-hint-env (hash))
+
+    ;; A hint env for a call to an escaping continuation.
+    (define (conventional-hint-env args)
+      (for/fold ([env empty-hint-env])
+                ([(arg i) (in-indexed args)])
+        (nanopass-case (RegisterizableCPCPS Atom) arg
+          [(lex ,n) (hash-set env n (set i))]
+          [else env])))
+
+    ;; A hint env for a known continuation, using the knowledge currently available.
+    (define (internal-hint-env hint-table label args)
+      (for/fold ([env empty-hint-env])
+                ([hints (hash-ref hint-table label (map (lambda (_) (set)) args))]
+                 [arg args])
+        (nanopass-case (RegisterizableCPCPS Atom) arg
+          [(lex ,n) (hash-set env n hints)]
+          [else env])))
+
+    ;; A hint env for a continuation based on its Transfer.
+    (define (cont-hint-env hint-table transfer)
+      (nanopass-case (RegisterizableCPCPS Transfer) transfer
+        [(goto ,x ,a* ...)
+         (nanopass-case (RegisterizableCPCPS Var) x
+           [(label ,n) (internal-hint-env hint-table n a*)]
+           [else (conventional-hint-env a*)])]
+        [(if ,a? ,x1 ,x2) empty-hint-env]
+        [(ffncall ,x ,a* ...) (conventional-hint-env a*)]
+        [(halt ,a) empty-hint-env]
+        [(raise ,a) empty-hint-env]))
+
+    ;; Get the hint set for a variable.
+    (define hint-ref (cute hash-ref <> <> (set))))
+
   (Program : Program (ir) -> Program ()
     [(prog ([,n* ,blocks*] ...) ,n)
      `(prog ([,n* ,(map (cute CFG <> <>) blocks* n*)] ...) ,n)])
@@ -184,19 +254,21 @@
      (define env (make-hash))
      (define kenv (zip-hash n1* k*))
      (define cont-acc (make-hash))
+     (define hint-table (make-hint-table))
      (for ([entry n2*])
        (let loop ([dom-tree (hash-ref dom-forest entry)])
          (match-define (cons label children) dom-tree)
-         (Cont (hash-ref kenv label) label env ltab liveness cont-acc)
+         (Cont (hash-ref kenv label) label env ltab liveness hint-table cont-acc)
          (for ([child children])
            (loop child))))
      (define-values (labels conts) (unzip-hash cont-acc))
      `(cfg ([,labels ,conts] ...) (,n2* ...))])
 
-  (Cont : Cont (ir label env ltab liveness cont-acc) -> Cont ()
+  (Cont : Cont (ir label env ltab liveness hint-table cont-acc) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
      (unless (hash-has-key? cont-acc label)
        (define cont-liveness (hash-ref liveness label))
+       (define hint-env (cont-hint-env hint-table t))
        (define reg-pool (reg-pool:make))
        (define param-regs
          (if (hash-ref (hash-ref ltab label) 'escapes?)
@@ -208,19 +280,20 @@
              (for ([freevar (hash-ref cont-liveness 'freevars)])
                (reg-pool:preallocate! reg-pool (hash-ref env freevar)))
              (for/list ([param n*])
-               (define reg (reg-pool:allocate! reg-pool))
+               (define reg (reg-pool:allocate! reg-pool (hint-ref hint-env param)))
                (hash-set! env param reg)
                reg))))
        (define stmts
          (for/list ([stmt s*] [luses (hash-ref cont-liveness 'stmt-last-uses)])
-           (Stmt stmt env reg-pool luses)))
-       (define transfer (Transfer t env))
-       (hash-set! cont-acc label `(cont ([,n* ,param-regs] ...) ,stmts ... ,transfer)))])
+           (Stmt stmt env reg-pool luses hint-env)))
+       (define transfer (Transfer t env hint-table cont-acc))
+       (hash-set! cont-acc label `(cont ([,n* ,param-regs] ...) ,stmts ... ,transfer))
+       (final-hint! hint-table label param-regs))])
 
-  (Stmt : Stmt (ir env reg-pool luses) -> Stmt ()
+  (Stmt : Stmt (ir env reg-pool luses hint-env) -> Stmt ()
     [(def ,n ,e)
      (reg-pool:deallocate-luses! reg-pool env luses)
-     (define reg (reg-pool:allocate! reg-pool))
+     (define reg (reg-pool:allocate! reg-pool (hint-ref hint-env n)))
      (hash-set! env n reg)
      `(def (,n ,reg) ,(Expr e env))]
     [,e
@@ -235,8 +308,13 @@
     [,a (Atom a env)])
 
   ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
-  (Transfer : Transfer (ir env) -> Transfer ()
-    [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
+  (Transfer : Transfer (ir env hint-table cont-acc) -> Transfer ()
+    [(goto ,x ,a* ...)
+     (nanopass-case (RegisterizableCPCPS Var) x
+       [(label ,n) (guard (not (hash-has-key? cont-acc n)))
+        (interim-hint! hint-table env n a*)]
+       [else (void)])
+     `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
     [(ffncall ,x ,a* ...) `(ffncall ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))])
 
@@ -258,6 +336,7 @@
   atom=?
   hash-atom)
 
+;; OPTIMIZE: Use a swap instruction (when VM gets one).
 (define-pass schedule-moves : RegCPCPS (ir livenesses dom-forests) -> InstrCPCPS ()
   (definitions
     (define (atom-in-reg? atom reg)
@@ -333,7 +412,7 @@
       (with-output-language (InstrCPCPS Var)
         (if (not (dict-empty? move-graph))
           (let-values ([(src dests) (stream-first (sequence->stream (in-dict move-graph)))])
-            (define dest (reg-pool:allocate! reg-pool))
+            (define dest (reg-pool:allocate! reg-pool (set)))
             (take-move! move-graph reg-pool src `(reg ,dest))
             (values #t dest src))
           (values #f #f #f))))
