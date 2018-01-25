@@ -112,6 +112,7 @@
     (if a? x1 x2)
     (call x1 x2 a* ...)
     (ffncall x1 x2 a* ...) ; TODO: x1 -> n, x2 -> x
+    (raise a)
     (halt a))
 
   (Expr (e)

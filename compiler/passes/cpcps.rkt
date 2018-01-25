@@ -61,7 +61,8 @@
        (Atom a? label ltab)
        (Callee x1 label ltab)
        (Callee x2 label ltab)]
-      [(halt ,a) (Atom a label ltab)])
+      [(halt ,a) (Atom a label ltab)]
+      [(raise ,a) (Atom a label ltab)])
 
     (Expr : Expr (ir label ltab) -> * ()
       [(primcall ,p ,a* ...) (for-each (cute Atom <> label ltab) a*)]

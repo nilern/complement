@@ -100,6 +100,9 @@
                      (set-union (Atom a?) (Var x1) (Var x2)))]
     [(halt ,a)
      (define freevars (Atom a))
+     (values freevars freevars)]
+    [(raise ,a)
+     (define freevars (Atom a))
      (values freevars freevars)])
 
   (Atom : Atom (ir) -> * ()
@@ -424,7 +427,8 @@
          (emit-moves)))
      `(ffncall ,callee)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a?) ,(Var x1) ,(Var x2))]
-    [(halt ,a) `(halt ,(Atom a))])
+    [(halt ,a) `(halt ,(Atom a))]
+    [(raise ,a) `(raise ,(Atom a))])
 
   (Atom : Atom (ir) -> Atom ()
     [(const ,c) `(const ,c)]

@@ -39,7 +39,8 @@
      (Callee x2 label cfg-edges)]
     [(call ,x1 ,x2 ,a* ...) (Callee x1 label cfg-edges)]
     [(ffncall ,x1 ,x2 ,a* ...) (void)]
-    [(halt ,a) (void)])
+    [(halt ,a) (void)]
+    [(raise ,a) (void)])
 
   (Callee : Var (ir label cfg-edges) -> * ()
     [(lex ,n) (void)]
@@ -117,7 +118,8 @@
      (Var x2 #f label env kenv stats visited)
      (for ([aexpr a*])
        (Atom aexpr label env kenv stats visited))]
-    [(halt ,a) (Atom a label env kenv stats visited)])
+    [(halt ,a) (Atom a label env kenv stats visited)]
+    [(raise ,a) (Atom a label env kenv stats visited)])
 
   (Expr : Expr (ir label env kenv stats visited) -> * ()
     [(fn ,blocks)
@@ -271,7 +273,8 @@
      (define callee (Escape x1 env stmt-acc))
      `(ffncall ,callee ,callee ,(Escape x2 env stmt-acc)
                ,(map (cute Atom <> env stmt-acc) a*) ...)]
-    [(halt ,a) `(halt ,(Atom a env stmt-acc))])
+    [(halt ,a) `(halt ,(Atom a env stmt-acc))]
+    [(raise ,a) `(raise ,(Atom a env stmt-acc))])
 
   (Expr : Expr (ir env fn-acc stmt-acc) -> Expr ()
     [(fn ,blocks)
@@ -436,7 +439,8 @@
     [(goto ,x ,a* ...) `(goto ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
     [(ffncall ,x ,a* ...) `(ffncall ,(Var x env) ,(map (cute Atom <> env) a*) ...)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a? env) ,(Var x1 env) ,(Var x2 env))]
-    [(halt ,a) `(halt ,(Atom a env))])
+    [(halt ,a) `(halt ,(Atom a env))]
+    [(raise ,a) `(raise ,(Atom a env))])
 
   (ShrinkTransfer : Transfer (ir label keep-indices) -> Transfer ()
     [(goto ,x ,a* ...)

@@ -94,7 +94,6 @@
             '__iNeg
             '__boxGet '__tupleNew '__tupleLength '__fnNew '__fnCode '__contNew '__contCode
             '__recNew '__recType
-            '__raise
             '__flibOpen)
         (list _))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
@@ -182,6 +181,6 @@
        [(reg ,i) (~> (ash i arg-index-shift)
                      (bit-or (encode-op '__ffnCall)))]
        [else (error "unreachable")])]
-    [('__halt (list a))
+    [((or '__halt '__raise) (list a))
      (~> (ash (encode-arg-atom a) arg-atom-shift)
          (bit-or (encode-op op)))]))

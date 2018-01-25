@@ -99,7 +99,8 @@
     [(call ,x1 ,x2 ,a* ...)
      (apply-fn (Var x1 env kenv) (cons (Var x2 env kenv) (map (cute Atom <> env kenv) a*)))]
     [(ffncall ,x1 ,x2 ,a* ...) (error "unimplemented")]
-    [(halt ,a) (Atom a env kenv)])
+    [(halt ,a) (Atom a env kenv)]
+    [(raise ,a) (error "unimplemented")])
 
    (Atom : Atom (ir env kenv) -> * ()
      [(const ,c) c]

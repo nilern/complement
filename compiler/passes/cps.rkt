@@ -50,7 +50,8 @@
     [(if ,a? ,x1 ,x2) (Atom a?) (Callee x1) (Callee x2)]
     [(call ,x1 ,x2 ,a* ...) (Callee x1) (Var x2) (for-each Atom a*)]
     [(ffncall ,x1 ,x2 ,a* ...) (Callee x1) (Var x2) (for-each Atom a*)]
-    [(halt ,a) (Atom a)])
+    [(halt ,a) (Atom a)]
+    [(raise ,a) (Atom a)])
 
   (Expr : Expr (ir) -> * ()
     [(fn ,blocks) (CFG blocks)]

@@ -26,6 +26,7 @@
     (struct $cont:def (cont name) #:transparent)
     (struct $cont:return (name) #:transparent)
     (struct $cont:halt () #:transparent)
+    (struct $cont:raise () #:transparent)
 
     ;; Control flow graph builder.
     (struct $cfg-builder (entry labels conts))
@@ -114,6 +115,11 @@
            [(list label) `(continue ,label ,aexpr)]
            [(list label1 label2) `(if ,aexpr ,label1 ,label2)]))))
 
+    ;; Build a cont that ends in an error being raised.
+    (define (build-cont/raise cont-builder aexpr)
+      (with-output-language (CPS Transfer)
+        (build-cont/transfer cont-builder `(raise ,aexpr))))
+
     ;; Build the continuation using the information in `cont-builder` and ending in a tail call to
     ;; `f` with `args` and the continuation `label`.
     (define (build-cont/call cont-builder f label args)
@@ -190,6 +196,10 @@
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define-values (label cont) (build-cont/atom cont-builder aexpr ret))
            (emit-cont! cfg-builder label cont)]
+          [($cont:raise)
+           (define aexpr (trivialize! cont-builder name-hint expr))
+           (define-values (label cont) (build-cont/raise cont-builder aexpr))
+           (emit-cont! cfg-builder label cont)]
           [($cont:halt)
            (define aexpr (trivialize! cont-builder name-hint expr))
            (define-values (label cont) (build-cont/atom cont-builder aexpr))
@@ -213,6 +223,8 @@
     [(continue ,n ,e) (Expr e ($cont:return `(label ,n)) cont-builder cfg-builder)]
     [(ffncall ,e1 ,e2 ,e3) (Expr e1 ($cont:ffn cont (list e2 e3)) cont-builder cfg-builder)]
     [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
+    [(primcall ,p ,e) (guard (eq? p '__raise))
+     (Expr e ($cont:raise) cont-builder cfg-builder)]
     [(primcall ,p ,e ,e* ...)
      (Expr e ($cont:primargs cont e* p '()) cont-builder cfg-builder)]
     [,n (continue cont `(lex ,n) #f cont-builder cfg-builder)]

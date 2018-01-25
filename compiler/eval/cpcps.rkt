@@ -91,7 +91,8 @@
          [#t x1]
          [#f x2]))
      (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv '())]
-    [(halt ,a) (Atom a env kenv fenv)])
+    [(halt ,a) (Atom a env kenv fenv)]
+    [(raise ,a) (error "unimplemented")])
 
   (Atom : Atom (ir env kenv fenv) -> * ()
     [(const ,c) c]

@@ -145,7 +145,8 @@
 
   (Transfer : Transfer (ir const-acc) -> Transfer ()
     [(brf ,[a?] ,n ,i) `(brf ,a? ,n ,i)]
-    [(halt ,[a]) `(halt ,a)])
+    [(halt ,[a]) `(halt ,a)]
+    [(raise ,[a]) `(raise ,a)])
 
   (Atom : Atom (ir const-acc) -> Atom ()
     [(const ,c) `(const ,(push-const! const-acc c))]))
@@ -218,4 +219,5 @@
     [(jmp ,x)        (serialize-instr (bytecode:encode-transfer '__jmp x) out)]
     [(brf ,a? ,n ,i) (serialize-instr (bytecode:encode-transfer '__brf a? i) out)]
     [(ffncall ,x)    (serialize-instr (bytecode:encode-transfer '__ffnCall x) out)]
-    [(halt ,a)       (serialize-instr (bytecode:encode-transfer '__halt a) out)]))
+    [(halt ,a)       (serialize-instr (bytecode:encode-transfer '__halt a) out)]
+    [(raise ,a)      (serialize-instr (bytecode:encode-transfer '__raise a) out)]))
