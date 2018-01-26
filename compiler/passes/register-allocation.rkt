@@ -337,18 +337,23 @@
   hash-atom)
 
 ;; OPTIMIZE: Use a swap instruction (when VM gets one).
+;;
+;; Emit sequential moves for register shuffling at calls.
 (define-pass schedule-moves : RegCPCPS (ir livenesses dom-forests) -> InstrCPCPS ()
   (definitions
+    ;; Is `atom` allocated to the register `reg`?
     (define (atom-in-reg? atom reg)
       (nanopass-case (InstrCPCPS Atom) atom
         [(reg ,i) (guard (= i reg)) #t]
         [else #f]))
 
+    ;; Free the register of `atom` if it has one allocated.
     (define (deallocate-atom! reg-pool atom)
       (nanopass-case (InstrCPCPS Atom) atom
         [(reg ,i) (reg-pool:deallocate! reg-pool i)]
         [else (void)]))
 
+    ;; Create move graph for a call of `callee` with `args`.
     (define make-move-graph
       (let* ([unknown-arg-moves!
               (lambda (move-graph args)
@@ -380,20 +385,27 @@
                  callee]))
             (values callee* move-graph)))))
 
+    ;; Add a move from `arg` to `reg` to `move-graph`.
     (define (add-move! move-graph arg reg)
       (~> (dict-ref! move-graph arg mutable-set)
           (set-add! reg)))
 
+    ;; Change the source `src` in `move-graph` to `new-src` and remove `new-src` from the
+    ;; corresponding destinations.
     (define (change-src! move-graph src new-src)
       (define dests (dict-take! move-graph src))
       (set-remove! dests (unwrap-reg new-src))
       (unless (set-empty? dests)
         (dict-set! move-graph new-src dests)))
 
+    ;; Remove the move of `src` to `dest-var` from `move-graph` and deallocate its register if it
+    ;; had one.
     (define (take-move! move-graph reg-pool src dest-var)
       (change-src! move-graph src dest-var)
       (deallocate-atom! reg-pool src))
 
+    ;; Find and take (with take-move!) a leaf move (a move whose destination is free) from
+    ;; `move-graph` if possible. Return `(values #t dest src)` if successful, else three #f:s.
     (define (take-leaf-move! move-graph reg-pool stmt-acc)
       (with-output-language (InstrCPCPS Var)
         (let/ec return
@@ -408,6 +420,8 @@
           (take-move! move-graph reg-pool src dest-var)
           (values #t dest src))))
 
+    ;; Break a cycle in `move-graph` (if cycles remain) by moving one of its registers into a free
+    ;; register. Return values as in `take-leaf-move!`.
     (define (break-cycle! move-graph reg-pool stmt-acc)
       (with-output-language (InstrCPCPS Var)
         (if (not (dict-empty? move-graph))
@@ -417,17 +431,31 @@
             (values #t dest src))
           (values #f #f #f))))
 
+    ;; Get the register that `atom` is allocated to. If not applicable, raise an exception.
     (define (unwrap-reg atom)
       (nanopass-case (InstrCPCPS Atom) atom
         [(reg ,i) i]
         [else (error "not a register" atom)]))
 
+    ;; Emit a statement into `stmt-acc`; a `def` if name is non-#f, else just an expr.
     (define (emit-stmt! stmt-acc name reg expr)
       (with-output-language (InstrCPCPS Stmt)
         (gvector-add! stmt-acc (if name `(def (,name ,reg) ,expr) expr))))
 
+    ;; Emit a move instruction from `src` to `dest` into `stmt-acc`.
     (define (emit-move! stmt-acc dest src)
-      (emit-stmt! stmt-acc (gensym 'arg) dest src)))
+      (emit-stmt! stmt-acc (gensym 'arg) dest src))
+
+    ;; Emit the moves for a call to `callee` with `args`.
+    (define (emit-moves! kenv reg-pool stmt-acc callee args)
+      (let-values ([(callee move-graph) (make-move-graph kenv (Var callee) (map Atom args))])
+        (let emit-rest! ()
+          (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
+            (emit-move! stmt-acc dest src))
+          (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
+            (emit-move! stmt-acc dest src)
+            (emit-rest!)))
+        callee)))
 
   (Program : Program (ir) -> Program ()
       [(prog ([,n* ,blocks*] ...) ,n)
@@ -484,26 +512,13 @@
      (emit-stmt! stmt-acc name reg `(primcall3 ,p ,(Atom a1) ,(Atom a2) ,(Atom a3)))]
     [,a (emit-stmt! stmt-acc name reg (Atom a))])
 
-  ;; TODO: Factor out the contents of the goto and ffncall cases.
   ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
   (Transfer : Transfer (ir kenv reg-pool stmt-acc) -> Transfer ()
     [(goto ,x ,a* ...)
-     (define-values (callee move-graph) (make-move-graph kenv (Var x) (map Atom a*)))
-     (let emit-moves ()
-       (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
-         (emit-move! stmt-acc dest src))
-       (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
-         (emit-move! stmt-acc dest src)
-         (emit-moves)))
+     (define callee (emit-moves! kenv reg-pool stmt-acc x a*))
      `(goto ,callee)]
     [(ffncall ,x ,a* ...)
-     (define-values (callee move-graph) (make-move-graph kenv (Var x) (map Atom a*)))
-     (let emit-moves ()
-       (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
-         (emit-move! stmt-acc dest src))
-       (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
-         (emit-move! stmt-acc dest src)
-         (emit-moves)))
+     (define callee (emit-moves! kenv reg-pool stmt-acc x a*))
      `(ffncall ,callee)]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a?) ,(Var x1) ,(Var x2))]
     [(halt ,a) `(halt ,(Atom a))]
