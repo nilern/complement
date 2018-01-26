@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by
-         while if-let when-let if-let-values when-let-values while-let-values)
+         while if-let when-let while-let if-let-values when-let-values while-let-values)
 (require (only-in srfi/26 cute))
 
 ;; Exception type for unbound variables in interpreters.
@@ -58,6 +58,15 @@
      (let ([name condition])
        (when name
          stmts ...))]))
+
+;; Like `while`, but value of condition is bound to `name` in `stmts`.
+(define-syntax while-let
+  (syntax-rules ()
+    [(while-let [name condition] stmts ...)
+     (let loop ()
+       (when-let [name condition]
+         stmts ...
+         (loop)))]))
 
 ;; Evaluate `prod` and bind the returned values to `name` and `names`. If `name` is not #f, evaluate
 ;; the `then` branch. Else evaluate the `otherwise` branch.

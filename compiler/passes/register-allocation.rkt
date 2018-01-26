@@ -2,7 +2,7 @@
 
 (provide allocate-registers)
 (require racket/match
-         (only-in racket/stream stream-first)
+         (only-in racket/stream stream-empty? stream-first)
          racket/set
          racket/dict
          data/gvector
@@ -12,7 +12,7 @@
 
          (rename-in "../langs.rkt" (InstrCPCPS-Atom=? atom=?) (InstrCPCPS-Atom-hash hash-atom))
          (prefix-in cfg: "../cfg.rkt")
-         (only-in "../util.rkt" zip-hash unzip-hash when-let-values while-let-values))
+         (only-in "../util.rkt" zip-hash unzip-hash while-let while-let-values))
 
 (define-pass cfg-liveness : RegisterizableCPCPS (ir) -> * ()
   (definitions
@@ -336,8 +336,6 @@
   atom=?
   hash-atom)
 
-;; OPTIMIZE: Use a swap instruction (when VM gets one).
-;;
 ;; Emit sequential moves for register shuffling at calls.
 (define-pass schedule-moves : RegCPCPS (ir livenesses dom-forests) -> InstrCPCPS ()
   (definitions
@@ -406,7 +404,7 @@
 
     ;; Find and take (with take-move!) a leaf move (a move whose destination is free) from
     ;; `move-graph` if possible. Return `(values #t dest src)` if successful, else three #f:s.
-    (define (take-leaf-move! move-graph reg-pool stmt-acc)
+    (define (take-leaf-move! move-graph reg-pool)
       (with-output-language (InstrCPCPS Var)
         (let/ec return
           (define-values (src dest dest-var)
@@ -420,16 +418,9 @@
           (take-move! move-graph reg-pool src dest-var)
           (values #t dest src))))
 
-    ;; Break a cycle in `move-graph` (if cycles remain) by moving one of its registers into a free
-    ;; register. Return values as in `take-leaf-move!`.
-    (define (break-cycle! move-graph reg-pool stmt-acc)
-      (with-output-language (InstrCPCPS Var)
-        (if (not (dict-empty? move-graph))
-          (let-values ([(src dests) (stream-first (sequence->stream (in-dict move-graph)))])
-            (define dest (reg-pool:allocate! reg-pool (set)))
-            (take-move! move-graph reg-pool src `(reg ,dest))
-            (values #t dest src))
-          (values #f #f #f))))
+    ;; Wrap a register number into an (InstrCPCPS Atom).
+    (define (wrap-reg reg)
+      (with-output-language (InstrCPCPS Atom) `(reg ,reg)))
 
     ;; Get the register that `atom` is allocated to. If not applicable, raise an exception.
     (define (unwrap-reg atom)
@@ -446,16 +437,40 @@
     (define (emit-move! stmt-acc dest src)
       (emit-stmt! stmt-acc (gensym 'arg) dest src))
 
-    ;; Emit the moves for a call to `callee` with `args`.
-    (define (emit-moves! kenv reg-pool stmt-acc callee args)
+    ;; Emit a swap instruction between `src` and `dest` into `stmt-acc`.
+    (define (emit-swap! stmt-acc dest src)
+      (with-output-language (InstrCPCPS Expr)
+        (emit-stmt! stmt-acc #f #f `(primcall2 __swap ,dest ,src))))
+
+    ;; Emit the moves and return the Transfer for a call to `callee` with `args`.
+    (define (emit-call! kenv reg-pool stmt-acc callee args make-transfer)
       (let-values ([(callee move-graph) (make-move-graph kenv (Var callee) (map Atom args))])
-        (let emit-rest! ()
-          (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool stmt-acc)]
-            (emit-move! stmt-acc dest src))
-          (when-let-values [(found? dest src) (break-cycle! move-graph reg-pool stmt-acc)]
-            (emit-move! stmt-acc dest src)
-            (emit-rest!)))
-        callee)))
+        ;; Convert a singleton register set into an atom.
+        (define (singleton-dests->atom dests)
+          (wrap-reg (stream-first (sequence->stream (in-set dests)))))
+
+        ;; Take a move that is part of a cycle and give its destination as an atom. If move-graph
+        ;; is empty, return #f.
+        (define (take-cycle-point! move-graph)
+          (if (dict-empty? move-graph)
+            #f
+            (let-values ([(src dests) (stream-first (sequence->stream (in-dict move-graph)))])
+              (dict-remove! move-graph src)
+              (singleton-dests->atom dests))))
+
+        ;; Emit non-cyclical moves.
+        (while-let-values [(found? dest src) (take-leaf-move! move-graph reg-pool)]
+          (emit-move! stmt-acc dest src))
+
+        ;; Only cyclical moves remain. Emit swaps for them.
+        (while-let [src (take-cycle-point! move-graph)] ; for every cycle
+          (let loop ([src src]) ; emit swaps for the cycle
+            (define dest (singleton-dests->atom (dict-take! move-graph src)))
+            (emit-swap! stmt-acc dest src)
+            (when (dict-has-key? move-graph dest)
+              (loop dest))))
+
+        (make-transfer callee))))
 
   (Program : Program (ir) -> Program ()
       [(prog ([,n* ,blocks*] ...) ,n)
@@ -515,11 +530,9 @@
   ;; NOTE: This doesn't need to `deallocate-luses!` since any children start with fresh reg-pools.
   (Transfer : Transfer (ir kenv reg-pool stmt-acc) -> Transfer ()
     [(goto ,x ,a* ...)
-     (define callee (emit-moves! kenv reg-pool stmt-acc x a*))
-     `(goto ,callee)]
+     (emit-call! kenv reg-pool stmt-acc x a* (lambda (callee) `(goto ,callee)))]
     [(ffncall ,x ,a* ...)
-     (define callee (emit-moves! kenv reg-pool stmt-acc x a*))
-     `(ffncall ,callee)]
+     (emit-call! kenv reg-pool stmt-acc x a* (lambda (callee) `(ffncall ,callee)))]
     [(if ,a? ,x1 ,x2) `(if ,(Atom a?) ,(Var x1) ,(Var x2))]
     [(halt ,a) `(halt ,(Atom a))]
     [(raise ,a) `(raise ,(Atom a))])

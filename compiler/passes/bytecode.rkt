@@ -22,7 +22,7 @@
 
 ;; Instruction names grouped by theme (e.g. integer arithmetic).
 (define ops
-  '((__mov)
+  '((__mov __swap)
 
     (__iEq __iLt __iLe __iGt __iGe)
     (__iNeg __iAdd __iSub __iMul __iDiv __iRem __iMod)
@@ -156,6 +156,12 @@
            [(reg ,i) i]
            [else (error "not a reg" dest)]))
        (encode-astmt op dest-reg (encode-arg-atoms args))]
+      [('__swap (list a b))
+       (~> (unwrap-reg b)
+           (ash arg-atom-shift)
+           (bit-or (unwrap-reg a))
+           (ash arg-atom-shift)
+           (bit-or (encode-op op)))]
       [(_ _) (error "unimplemented encoding" op)])))
 
 ;; Encode a transfer.

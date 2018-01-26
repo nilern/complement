@@ -77,6 +77,11 @@ impl VM {
                 Mov { dest, src } => {
                     *self.reg_mut(dest) = self.atom(src).clone();
                 },
+                Swap { dest, src } => {
+                    let tmp = self.reg(dest.into()).clone();
+                    *self.reg_mut(dest) = self.reg(src.into()).clone();
+                    *self.reg_mut(src) = tmp;
+                },
 
                 IEq { dest, arg1, arg2 } => {
                     *self.reg_mut(dest) =

@@ -6,7 +6,8 @@ const BYTE_MASK: u32 = (1 << 8) - 1;
 const ATOM_INDEX_SHIFT: usize = 1;
 const ATOM_TAG_MASK: u8 = (1 << ATOM_INDEX_SHIFT) - 1;
 
-pub const MOV: u8 = 0x00;
+pub const MOV : u8 = 0x00;
+pub const SWAP: u8 = 0x01;
 
 pub const IEQ: u8 = 0x10;
 pub const ILT: u8 = 0x11;
@@ -77,6 +78,10 @@ impl<T> From<AnySrcReg> for SrcReg<T> {
 
 impl<T> From<SrcReg<T>> for AnySrcReg {
     fn from(reg: SrcReg<T>) -> AnySrcReg { reg.0 }
+}
+
+impl From<DestReg> for AnySrcReg {
+    fn from(reg: DestReg) -> AnySrcReg { AnySrcReg(reg.0) }
 }
 
 impl From<AnySrcReg> for usize {
@@ -156,6 +161,7 @@ impl From<u32> for Instr {
 
 pub enum InstrView<'a> {
     Mov { dest: DestReg, src: AnyAtom },
+    Swap { dest: DestReg, src: DestReg },
 
     IEq { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
     ILt { dest: DestReg, arg1: Atom<isize>, arg2: Atom<isize> },
@@ -221,6 +227,7 @@ impl Instr {
 
         match self.op() {
             MOV => Mov { dest: self.reg_arg(0), src: self.atom_arg(1) },
+            SWAP => Swap { dest: self.reg_arg(0), src: self.reg_arg(1) },
 
             IEQ => IEq { dest: self.reg_arg(0), arg1: From::from(self.atom_arg(1)),
                          arg2: From::from(self.atom_arg(2)) },
