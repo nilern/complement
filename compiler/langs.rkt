@@ -82,14 +82,12 @@
 
   (Expr (e)
     (- (fn n fc ...))
-    (+ (fn (n1* ...) ([n2* fc*] ...) e))
-    (+ (if e? e1 e2))
-    (+ (continue n e)))
+    (+ (fn (n1* ...) e))
+    (+ (if e? e1 e2)))
 
   (Case (fc)
     (- (case (n* ...) e? e))
-    (- (case n e? e))
-    (+ (case (n* ...) e))))
+    (- (case n e? e))))
 
 (define-language CPS
   (terminals

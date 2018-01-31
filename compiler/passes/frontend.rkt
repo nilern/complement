@@ -262,43 +262,37 @@
         [(case (,n* ...) ,e? ,e) (values n* (Expr e?) (Expr e))]
         [(case ,n ,e? ,e) (values n (Expr e?) (Expr e))]))
 
-    (define (emit-case-body argv argc case next)
+    (define (emit-case-body argv case next)
       (with-output-language (Ast Expr)
         (define (emit-inner cond body)
           (match/values (const-value cond)
             [(#t #t) body]
-            [(#t #f) `(continue ,next ,argc)] ; OPTIMIZE: These cases should just be skipped
-            [(_ _) `(if ,cond ,body (continue ,next ,argc))]))
+            [(#t #f) `(call ,next)] ; OPTIMIZE: These cases should just be skipped
+            [(_ _) `(if ,cond ,body (call ,next))]))
 
         (let*-values ([(params cond body) (unapply-case case)]
                       [(condv-known? condv) (const-value cond)])
           (if (list? params)
-            `(if (primcall __iEq ,argc (const ,(length params)))
+            `(if (primcall __iEq (primcall __tupleLength ,argv) (const ,(length params)))
                (block ,(for/list ([(p i) (in-indexed params)])
                          (with-output-language (Ast Stmt)
                            `(def ,p (primcall __tupleGet ,argv (const ,i))))) ...
                  ,(emit-inner cond body))
-               (continue ,next ,argc))
+               (call ,next))
             `(block (def ,params ,argv)
                ,(emit-inner cond body))))))
 
-    (define ((emit-case argv) case next)
-      (with-output-language (Ast Case)
-        (define argc (gensym 'argc))
-        `(case (,argc) ,(emit-case-body argv argc case next)))))
+    (define (emit-cases argv cases)
+      (with-output-language (Ast Expr)
+        (define (emit-case case next-case-body)
+          (let ([next (gensym 'case)])
+            `(block (def ,next (fn () ,next-case-body))
+                    ,(emit-case-body argv case next))))
+        (foldr emit-case `(primcall __raise (const NoSuchMethod)) cases))))
 
   (Expr : Expr (ir) -> Expr ()
     [(fn ,n ,fc* ...)
-     (let* ([argv (gensym 'argv)]
-            [first-argc (gensym 'argc)]
-            [fail-argc (gensym 'argc)]
-            [succ-labels (map (lambda (_) (gensym 'k)) (rest fc*))]
-            [fail-label (gensym 'k)]
-            [labels (append succ-labels (list fail-label))])
-       `(fn (,n ,argv)
-          ([,succ-labels ,(map (emit-case argv) (rest fc*) (rest labels))] ...
-           [,fail-label  (case (,fail-argc) (primcall __raise (const NoSuchMethod)))])
-          (block (def ,first-argc (primcall __tupleLength ,argv))
-            ,(emit-case-body argv first-argc (first fc*) (first labels)))))]
+     (define argv (gensym 'argv))
+     `(fn (,n ,argv) ,(emit-cases argv fc*))]
     [(call ,[e1] ,[e2] ,[e*] ...)
      `(call ,e1 ,e2 (primcall __tupleNew ,e* ...))]))

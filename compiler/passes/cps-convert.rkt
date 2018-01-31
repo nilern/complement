@@ -205,12 +205,11 @@
            (emit-cont! cfg-builder label cont)]))))
 
   (Expr : Expr (expr cont cont-builder cfg-builder) -> Expr ()
-    [(fn (,n1* ...) ([,n2* ,fc*] ...) ,e)
+    [(fn (,n1* ...)  ,e)
      (let ([f (let* ([ret (gensym 'ret)]
                      [entry (gensym 'entry)]
                      [cont ($cont:return `(lex ,ret))]
                      [cfg-builder (make-cfg-builder entry)])
-                (for-each (cute Case <> <> cont cfg-builder) fc* n2*)
                 (Expr e cont (make-cont-builder entry (cons ret n1*)) cfg-builder)
                 `(fn ,(build-cfg cfg-builder)))])
        (continue cont f #f cont-builder cfg-builder))]
@@ -219,7 +218,6 @@
     [(block ,s ,s* ... ,e)
      (Stmt s ($cont:block cont s* e) cont-builder cfg-builder)]
     [(call ,e ,e* ...) (Expr e ($cont:fn cont e*) cont-builder cfg-builder)]
-    [(continue ,n ,e) (Expr e ($cont:return `(label ,n)) cont-builder cfg-builder)]
     [(ffncall ,e1 ,e2 ,e3) (Expr e1 ($cont:ffn cont (list e2 e3)) cont-builder cfg-builder)]
     [(primcall ,p) (continue cont `(primcall ,p) #f cont-builder cfg-builder)]
     [(primcall ,p ,e) (guard (eq? p '__raise))
@@ -232,9 +230,6 @@
   (Stmt : Stmt (stmt cont cont-builder cfg-builder) -> Stmt ()
     [(def ,n ,e) (Expr e ($cont:def cont n) cont-builder cfg-builder)]
     [,e (Expr e cont cont-builder cfg-builder)])
-
-  (Case : Case (ir label cont cfg-builder) -> Cont ()
-    [(case (,n* ...) ,e) (Expr e cont (make-cont-builder label n*) cfg-builder)])
 
   (let* ([entry (gensym 'main)]
          [cfg-builder (make-cfg-builder entry)])
