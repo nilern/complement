@@ -466,9 +466,9 @@
         (while-let [src (take-cycle-point! move-graph)] ; for every cycle
           (let loop ([src src]) ; emit swaps for the cycle
             (define dest (singleton-dests->atom (dict-take! move-graph src)))
-            (emit-swap! stmt-acc dest src)
             (when (dict-has-key? move-graph dest)
-              (loop dest))))
+              (loop dest))
+            (emit-swap! stmt-acc dest src)))
 
         (make-transfer callee))))
 
