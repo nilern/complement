@@ -14,7 +14,7 @@
            (only-in "passes/parse.rkt" parse)
            (only-in "passes/frontend.rkt" alphatize lex-straighten introduce-dyn-env add-dispatch)
 
-           (only-in "passes/cps.rkt" (census cps-census))
+           (only-in "passes/cps.rkt" (census cps-census) (shrink cps-shrink))
            (only-in "passes/cps-convert.rkt" cps-convert relax-edges)
 
            (only-in "passes/closure-convert.rkt" analyze-closures closure-convert)
@@ -51,8 +51,9 @@
       'add-dispatch      (pass '(introduce-dyn-env) add-dispatch #f)
 
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
-      'cps-census       (pass '(cps-convert) (cute cps-census <> 1) #f)
-      'relax-edges      (pass '(cps-convert cps-census)
+      'cps-shrink       (pass '(cps-convert) cps-shrink eval-CPS)
+      'cps-census       (pass '(cps-shrink) (cute cps-census <> 1) #f)
+      'relax-edges      (pass '(cps-shrink cps-census)
                               (lambda (ir census-tables)
                                 (relax-edges ir (hash-ref census-tables 'label-table)
                                                 (hash-ref census-tables 'var-table)))
