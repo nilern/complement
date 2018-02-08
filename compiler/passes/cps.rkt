@@ -150,6 +150,8 @@
 ;; * Elimination of unused (both 'dead' and 'unreachable') code.
 (define-pass shrink : CPS (ir) -> CPS ()
   (definitions
+    (define current-fn (make-parameter #t))
+
     (define transient-program%
       (class object%
         (init cfg)
@@ -296,8 +298,12 @@
 
         ;;;; Environment management
 
-        (define/public (propagated name default)
-          (hash-ref substitution name default))
+        (define/public (propagated fn-name name default)
+          (define atom (hash-ref substitution name default))
+          (nanopass-case (CPS Atom) atom
+            [(label ,n) (guard (not (eq? (label-fn n) fn-name)))
+             default]
+            [else atom]))
 
         (define (label-arglists label)
           (for/list ([usage-label (applications-of label)])
@@ -404,24 +410,25 @@
   ;; Process one function; driver loops and function merging.
   (CFG : CFG (ir fn-name) -> CFG ()
     [(cfg ([,n* ,k*] ...) ,n)
-     (send transient-program enter-function! fn-name n* k* n) ; HACK?
+     (parameterize ([current-fn fn-name])
+       (send transient-program enter-function! fn-name n* k* n) ; HACK?
 
-     ;; FoldCont in reverse postorder (since we only have DAG:s, topologically sorted order):
-     (let loop ()
-       (while-let-values [(label cont) (send transient-program pop-orig-cont! fn-name)]
-         (when-let [folded-cont (FoldCont cont label)]
-           (send transient-program push-folded-cont! fn-name label folded-cont)))
-       ;; When at the end, try to expand CFG by merging in other functions that are only called from
-       ;; here and never escape:
-       (when (send transient-program fn-merge-into! fn-name)
-         (loop)))
+       ;; FoldCont in reverse postorder (since we only have DAG:s, topologically sorted order):
+       (let loop ()
+         (while-let-values [(label cont) (send transient-program pop-orig-cont! fn-name)]
+           (when-let [folded-cont (FoldCont cont label)]
+             (send transient-program push-folded-cont! fn-name label folded-cont)))
+         ;; When at the end, try to expand CFG by merging in other functions that are only called
+         ;; from here and never escape:
+         (when (send transient-program fn-merge-into! fn-name)
+           (loop)))
 
-     ;; CompactCont in (reversed reverse) postorder:
-     (while-let-values [(label cont) (send transient-program pop-folded-cont! fn-name)]
-       (when-let [compacted-cont (CompactCont cont label)]
-         (send transient-program push-finished-cont! fn-name label compacted-cont)))
+       ;; CompactCont in (reversed reverse) postorder:
+       (while-let-values [(label cont) (send transient-program pop-folded-cont! fn-name)]
+         (when-let [compacted-cont (CompactCont cont label)]
+           (send transient-program push-finished-cont! fn-name label compacted-cont)))
 
-     (send transient-program build-cfg fn-name)])
+       (send transient-program build-cfg fn-name))])
 
   ;;;;
 
@@ -479,7 +486,7 @@
 
   (FoldVar : Var (ir label) -> Atom ()
     [(lex ,n)
-     (define ir* (send transient-program propagated n ir))
+     (define ir* (send transient-program propagated (current-fn) n ir))
      (if (eq? ir ir*)
        ir*
        (begin
