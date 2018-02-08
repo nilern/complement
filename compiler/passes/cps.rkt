@@ -151,6 +151,7 @@
 (define-pass shrink : CPS (ir) -> CPS ()
   (definitions
     (define current-fn (make-parameter #t))
+    (define current-label (make-parameter #f))
 
     (define transient-program%
       (class object%
@@ -376,7 +377,7 @@
 
     ;;;;
 
-    (define (fold-stmt name expr label)
+    (define (fold-stmt name expr)
       (define (unused? name)
         (or (not name) (send transient-program unused? name)))
 
@@ -384,10 +385,10 @@
         (define pure (pure? expr))
         (if (and (unused? name) pure)
           (begin
-            (EliminateExpr expr label)
+            (EliminateExpr expr)
             #f)
           (if first-try
-            (retry (FoldExpr expr label) #f)
+            (retry (FoldExpr expr) #f)
             (begin
               (when pure
                 (send transient-program allocate! name expr))
@@ -437,61 +438,59 @@
 
   (FoldCont : Cont (ir label) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
-     (and (send transient-program used? label)
-          (begin
-            (send transient-program propagate-params! label n*)
-            (let* ([stmts (filter-map (cute FoldStmt <> label) s*)]
-                   [transfer (FoldTransfer t label)])
-              `(cont (,n* ...) ,stmts ... ,transfer))))])
+     (parameterize ([current-label label])
+       (and (send transient-program used? (current-label))
+            (begin
+              (send transient-program propagate-params! (current-label) n*)
+              (let* ([stmts (filter-map FoldStmt s*)]
+                     [transfer (FoldTransfer t)])
+                `(cont (,n* ...) ,stmts ... ,transfer)))))])
 
-  (FoldStmt : Stmt (ir label) -> Stmt ()
-    [(def ,n ,e) (fold-stmt n e label)]
-    [,e (fold-stmt #f e label)])
+  (FoldStmt : Stmt (ir) -> Stmt ()
+    [(def ,n ,e) (fold-stmt n e)]
+    [,e (fold-stmt #f e)])
 
-  (FoldExpr : Expr (ir label) -> Expr ()
+  (FoldExpr : Expr (ir) -> Expr ()
     [(fn ,blocks) ir]
     [(primcall ,p ,a* ...)
-     (define args (map (cute FoldAtom <> label) a*))
+     (define args (map FoldAtom a*))
      (if-let [folded-expr (constant-fold p args)]
        (begin
-         (DiscoverExpr folded-expr label)
+         (DiscoverExpr folded-expr)
          (for-each EliminateAtom args)
          folded-expr)
        `(primcall ,p ,args ...))]
-    [,a (FoldAtom a label)])
+    [,a (FoldAtom a)])
 
-  (FoldTransfer : Transfer (ir label) -> Transfer ()
-    [(continue ,x ,a* ...)
-     `(continue ,(FoldVar x label) ,(map (cute FoldAtom <> label) a*) ...)]
+  (FoldTransfer : Transfer (ir) -> Transfer ()
+    [(continue ,x ,a* ...) `(continue ,(FoldVar x) ,(map FoldAtom a*) ...)]
     [(if ,a? ,x1 ,x2)
-     (define condition (FoldAtom a? label))
+     (define condition (FoldAtom a?))
      (nanopass-case (CPS Atom) condition
        [(const ,c) (guard (eqv? c #t))
-        (EliminateVar x2 label)
-        `(continue ,(FoldVar x1 label))]
+        (EliminateVar x2)
+        `(continue ,(FoldVar x1))]
        [(const ,c) (guard (eqv? c #f))
-        (EliminateVar x1 label)
-        `(continue ,(FoldVar x2 label))]
-       [else `(if ,condition ,(FoldVar x1 label) ,(FoldVar x2 label))])]
-    [(call ,x1 ,x2 ,a* ...)
-     `(call ,(FoldVar x1 label) ,(FoldVar x2 label) ,(map (cute FoldAtom <> label) a*) ...)]
-    [(ffncall ,x1 ,x2 ,a* ...)
-     `(ffncall ,(FoldVar x1 label) ,(FoldVar x2 label) ,(map (cute FoldAtom <> label) a*) ...)]
-    [(raise ,a) `(raise ,(FoldAtom a label))]
-    [(halt ,a) `(halt ,(FoldAtom a label))])
+        (EliminateVar x1)
+        `(continue ,(FoldVar x2))]
+       [else `(if ,condition ,(FoldVar x1) ,(FoldVar x2))])]
+    [(call ,x1 ,x2 ,a* ...) `(call ,(FoldVar x1) ,(FoldVar x2) ,(map FoldAtom a*) ...)]
+    [(ffncall ,x1 ,x2 ,a* ...) `(ffncall ,(FoldVar x1) ,(FoldVar x2) ,(map FoldAtom a*) ...)]
+    [(raise ,a) `(raise ,(FoldAtom a))]
+    [(halt ,a) `(halt ,(FoldAtom a))])
 
-  (FoldAtom : Atom (ir label) -> Atom ()
-    [,x (FoldVar x label)]
+  (FoldAtom : Atom (ir) -> Atom ()
+    [,x (FoldVar x)]
     [(const ,c) ir])
 
-  (FoldVar : Var (ir label) -> Atom ()
+  (FoldVar : Var (ir) -> Atom ()
     [(lex ,n)
      (define ir* (send transient-program propagated (current-fn) n ir))
      (if (eq? ir ir*)
        ir*
        (begin
-         (DiscoverAtom ir* label)
-         (EliminateVar ir label)
+         (DiscoverAtom ir*)
+         (EliminateVar ir)
          ir*))]
     [(label ,n) ir])
 
@@ -503,18 +502,18 @@
   ;; TODO: CompactTransfer for basic block merging
   (CompactCont : Cont (ir label) -> Cont ()
     [(cont (,n* ...) ,s* ... ,t)
-     (and (send transient-program used? label)
-          (let* ([stmts (reverse (filter-map (cute CompactStmt <> label)
-                                             (reverse s*)))] ; OPTIMIZE
-                 [params (send transient-program compact-params! label n*)])
-            `(cont (,params ...) ,stmts ... ,t)))])
+     (parameterize ([current-label label])
+       (and (send transient-program used? (current-label))
+            (let* ([stmts (reverse (filter-map CompactStmt (reverse s*)))] ; OPTIMIZE
+                   [params (send transient-program compact-params! (current-label) n*)])
+              `(cont (,params ...) ,stmts ... ,t))))])
 
-  (CompactStmt : Stmt (ir label) -> Stmt ()
+  (CompactStmt : Stmt (ir) -> Stmt ()
     [(def ,n (fn ,blocks)) (guard (send transient-program integrated? n)) #f]
     [(def ,n ,e)
      (if (and (send transient-program unused? n) (pure? e))
        (begin ; has become useless after StmtForward and needs to be eliminated now
-         (EliminateExpr e label)
+         (EliminateExpr e)
          #f)
        (begin ; remove from abstract heap so that we don't try to inline recursive fns:
          (send transient-program deallocate! n)
@@ -534,55 +533,48 @@
   (EliminateCFG : CFG (ir) -> * ()
     [(cfg ([,n* ,k*] ...) ,n) (eliminate-label-ref! n)])
 
-  (EliminateCont : Cont (ir label) -> * ()
-    [(cont (,n* ...) ,s* ... ,t)
-     (for-each (cute EliminateStmt <> label) s*)
-     (EliminateTransfer t label)])
+  (EliminateCont : Cont (ir) -> * ()
+    [(cont (,n* ...) ,s* ... ,t) (for-each EliminateStmt s*) (EliminateTransfer t)])
 
-  (EliminateStmt : Stmt (ir label) -> * ()
-    [(def ,n ,e) (EliminateExpr e label)]
-    [,e (EliminateExpr e label)])
+  (EliminateStmt : Stmt (ir) -> * ()
+    [(def ,n ,e) (EliminateExpr e)]
+    [,e (EliminateExpr e)])
 
-  (EliminateExpr : Expr (ir label) -> * ()
+  (EliminateExpr : Expr (ir) -> * ()
     [(fn ,blocks) (EliminateCFG blocks)]
-    [(primcall ,p ,a* ...) (for-each (cute EliminateAtom <> label) a*)]
-    [,a (EliminateAtom a label)])
+    [(primcall ,p ,a* ...) (for-each EliminateAtom a*)]
+    [,a (EliminateAtom a)])
 
-  (EliminateTransfer : Transfer (ir label) -> * ()
-    [(continue ,x ,a* ...)
-     (EliminateVar x label)
-     (for-each (cute EliminateAtom <> label) a*)]
-    [(if ,a? ,x1 ,x2)
-     (EliminateAtom a? label) (EliminateVar x1 label) (EliminateVar x2 label)]
-    [(call ,x1 ,x2 ,a* ...)
-     (EliminateVar x1 label) (EliminateVar x2 label) (for-each (cute EliminateAtom <> label) a*)]
-    [(ffncall ,x1 ,x2 ,a* ...)
-     (EliminateVar x1 label) (EliminateVar x2 label) (for-each (cute EliminateAtom <> label) a*)]
-    [(raise ,a) (EliminateAtom a label)]
-    [(halt ,a) (EliminateAtom a label)])
+  (EliminateTransfer : Transfer (ir) -> * ()
+    [(continue ,x ,a* ...) (EliminateVar x) (for-each EliminateAtom a*)]
+    [(if ,a? ,x1 ,x2) (EliminateAtom a?) (EliminateVar x1) (EliminateVar x2)]
+    [(call ,x1 ,x2 ,a* ...) (EliminateVar x1) (EliminateVar x2) (for-each EliminateAtom a*)]
+    [(ffncall ,x1 ,x2 ,a* ...) (EliminateVar x1) (EliminateVar x2) (for-each EliminateAtom a*)]
+    [(raise ,a) (EliminateAtom a)]
+    [(halt ,a) (EliminateAtom a)])
 
-  (EliminateAtom : Atom (ir label) -> * ()
-    [,x (EliminateVar x label)]
+  (EliminateAtom : Atom (ir) -> * ()
+    [,x (EliminateVar x)]
     [(const ,c) (void)])
 
-  (EliminateVar : Var (ir label) -> * ()
-    [(lex ,n) (send transient-program remove-escape! n label)]
+  (EliminateVar : Var (ir) -> * ()
+    [(lex ,n) (send transient-program remove-escape! n (current-label))]
     [(label ,n) (eliminate-label-ref! n)])
 
   ;;;;
 
-  (DiscoverExpr : Expr (ir label) -> * ()
+  (DiscoverExpr : Expr (ir) -> * ()
     [(fn ,blocks) (error "unimplemented")]
-    [(primcall ,p ,a* ...) (for-each (cute DiscoverAtom <> label) a*)]
-    [,a (DiscoverAtom a label)])
+    [(primcall ,p ,a* ...) (for-each DiscoverAtom a*)]
+    [,a (DiscoverAtom a)])
 
-  (DiscoverAtom : Atom (ir label) -> * ()
-    [,x (DiscoverVar x label)]
+  (DiscoverAtom : Atom (ir) -> * ()
+    [,x (DiscoverVar x)]
     [(const ,c) (void)])
 
-  (DiscoverVar : Var (ir label) -> * ()
-    [(lex ,n) (send transient-program add-escape! n label)]
-    [(label ,n) (send transient-program add-escape! n label)])
+  (DiscoverVar : Var (ir) -> * ()
+    [(lex ,n) (send transient-program add-escape! n (current-label))]
+    [(label ,n) (send transient-program add-escape! n (current-label))])
 
   ;;;;
 
