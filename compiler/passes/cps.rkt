@@ -165,7 +165,6 @@
         ;;;; Fields and minimal initialization
 
         (define orig-worklists (make-hash))
-        (define folded-worklists (make-hash))
 
         (define escapes (make-hash))
         (define applications (make-hash))
@@ -192,16 +191,6 @@
 
         (define/public (pop-orig-cont! fn-name)
           (worklist-pop! (hash-ref orig-worklists fn-name)))
-
-        (define/public (push-folded-cont! fn-name label cont)
-          (enqueue-front! (hash-ref! folded-worklists fn-name make-queue) label)
-          (hash-set! conts label cont))
-
-        (define/public (pop-folded-cont! fn-name)
-          (worklist-pop! (hash-ref folded-worklists fn-name)))
-
-        (define/public (push-finished-cont! _ label cont)
-          (hash-set! conts label cont))
 
         ;;;; Statistics methods
 
@@ -248,6 +237,12 @@
           (hash-remove! applications old))
 
         ;;;; Label-continuation-fn mapping methods
+
+        (define/public (cont-ref label)
+          (hash-ref conts label))
+
+        (define/public (set-cont! label cont)
+          (hash-set! conts label cont))
 
         (define (label-fn label)
           (hash-ref label-fns label))
@@ -419,20 +414,25 @@
      (parameterize ([current-fn fn-name])
        (send transient-program enter-function! fn-name n* k* n) ; HACK?
 
+       (define folded-worklist (make-queue))
+
        ;; FoldCont in reverse postorder (since we only have DAG:s, topologically sorted order):
        (let loop ()
          (while-let-values [(label cont) (send transient-program pop-orig-cont! fn-name)]
            (when-let [folded-cont (FoldCont cont label)]
-             (send transient-program push-folded-cont! fn-name label folded-cont)))
+             (enqueue-front! folded-worklist label)
+             (send transient-program set-cont! label folded-cont)))
          ;; When at the end, try to expand CFG by merging in other functions that are only called
          ;; from here and never escape:
          (when (send transient-program fn-merge-into! fn-name)
            (loop)))
 
        ;; CompactCont in (reversed reverse) postorder:
-       (while-let-values [(label cont) (send transient-program pop-folded-cont! fn-name)]
-         (when-let [compacted-cont (CompactCont cont label)]
-           (send transient-program push-finished-cont! fn-name label compacted-cont)))
+       (while (non-empty-queue? folded-worklist)
+         (let* ([label (dequeue! folded-worklist)]
+                [cont (send transient-program cont-ref label)])
+           (when-let [compacted-cont (CompactCont cont label)]
+             (send transient-program set-cont! label compacted-cont))))
 
        (send transient-program build-cfg fn-name))])
 
