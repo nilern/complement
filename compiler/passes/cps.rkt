@@ -12,7 +12,8 @@
          nanopass/base
 
          "../langs.rkt"
-         (only-in "../util.rkt" zip-hash unzip-hash while if-let when-let while-let-values))
+         (only-in "../util.rkt" zip-hash unzip-hash while if-let when-let while-let-values)
+         (only-in "../nanopass-util.rkt" define/nanopass))
 
 (define-pass for-each-usage : CPS (ir callf continuef escapef) -> * ()
   (definitions
@@ -123,21 +124,25 @@
 ;; HACK:
 (define (primops:pure? _) #f)
 
+(define/nanopass (CPS Expr) (pure? ir)
+  [(fn ,blocks) #t]
+  [(primcall ,p ,a* ...) (primops:pure? p)]
+  [,a #t])
+
 (define (unify-atoms atoms)
-  (define (unify2 atom1 atom2)
-    (nanopass-case (CPS Atom) atom1
-      [(const ,c1)
-       (nanopass-case (CPS Atom) atom2
-         [(const ,c2) (guard (equal? c1 c2)) atom1]
-         [else #f])]
-      [(lex ,n1)
-       (nanopass-case (CPS Atom) atom2
-         [(lex ,n2) (guard (eq? n1 n2)) atom1]
-         [else #f])]
-      [(label ,n1)
-       (nanopass-case (CPS Atom) atom2
-         [(label ,n2) (guard (eq? n1 n2)) atom1]
-         [else #f])]))
+  (define/nanopass (CPS Atom) (unify2 atom1 atom2)
+    [(const ,c1)
+     (nanopass-case (CPS Atom) atom2
+       [(const ,c2) (guard (equal? c1 c2)) atom1]
+       [else #f])]
+    [(lex ,n1)
+     (nanopass-case (CPS Atom) atom2
+       [(lex ,n2) (guard (eq? n1 n2)) atom1]
+       [else #f])]
+    [(label ,n1)
+     (nanopass-case (CPS Atom) atom2
+       [(label ,n2) (guard (eq? n1 n2)) atom1]
+       [else #f])])
   (foldl unify2 (first atoms) (rest atoms)))
 
 ;; * Copy and constant propagation including Cont parameters.
@@ -575,13 +580,6 @@
   (DiscoverVar : Var (ir) -> * ()
     [(lex ,n) (send transient-program add-escape! n (current-label))]
     [(label ,n) (send transient-program add-escape! n (current-label))])
-
-  ;;;;
-
-  (pure? : Expr (ir) -> * ()
-    [(fn ,blocks) #t]
-    [(primcall ,p ,a* ...) (primops:pure? p)]
-    [,a #t])
 
   ;;;;
 
