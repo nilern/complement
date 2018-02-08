@@ -7,6 +7,7 @@
   (require racket/match
            racket/cmdline
            racket/pretty
+           (only-in racket/function identity)
            (only-in srfi/26 cute)
 
            (only-in "util.rkt" when-let)
@@ -51,7 +52,7 @@
       'add-dispatch      (pass '(introduce-dyn-env) add-dispatch #f)
 
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
-      'cps-shrink       (pass '(cps-convert) cps-shrink eval-CPS)
+      'cps-shrink       (pass '(cps-convert) identity #|cps-shrink|# eval-CPS)
       'cps-census       (pass '(cps-shrink) (cute cps-census <> 1) #f)
       'relax-edges      (pass '(cps-shrink cps-census)
                               (lambda (ir census-tables)
