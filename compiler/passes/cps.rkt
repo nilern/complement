@@ -145,6 +145,63 @@
        [else #f])])
   (foldl unify2 (first atoms) (rest atoms)))
 
+(define statistics%
+  (class object%
+    ;;; Fields and initialization
+
+    (define escapes (make-hash))
+    (define applications (make-hash))
+
+    (super-new)
+
+    ;;; Escape methods
+
+    (define (escapes-of name)
+      (hash-ref! escapes name make-gvector))
+
+    (define (escape-count name)
+      (gvector-count (escapes-of name)))
+
+    (define/public (add-escape! name label)
+      (gvector-add! (hash-ref! escapes name make-gvector) label))
+
+    (define/public (remove-escape! name label)
+      (let/ec return
+        (define name-escapes (hash-ref! escapes name make-gvector))
+        (for ([(l i) (in-indexed name-escapes)])
+          (when (eq? l label)
+            (gvector-remove! name-escapes i)
+            (return (void))))))
+
+    ;;; Application methods
+
+    (define/public (applications-of name)
+      (hash-ref! applications name make-gvector))
+
+    (define (application-count name)
+      (gvector-count (applications-of name)))
+
+    (define/public (add-application! name label)
+      (gvector-add! (hash-ref! applications name make-gvector) label))
+
+    ;;; High-level API
+
+    (define/public (used? name)
+      (not (unused? name)))
+
+    (define/public (unused? name)
+      (and (zero? (escape-count name))
+           (zero? (application-count name))))
+
+    (define/public (first-order? label)
+      (zero? (escape-count label)))
+
+    (define/public (transfer-usages! old new)
+      (for ([label (escapes-of old)]) (add-escape! new label))
+      (hash-remove! escapes old)
+      (for ([label (applications-of old)]) (add-application! new label))
+      (hash-remove! applications old))))
+
 ;; * Copy and constant propagation including Cont parameters.
 ;; * Constant folding.
 ;; * Integration of first-order functions into their only direct caller.
@@ -166,8 +223,7 @@
 
         (define orig-worklists (make-hash))
 
-        (define escapes (make-hash))
-        (define applications (make-hash))
+        (define stats (new statistics%))
 
         (define entries (make-hash))
         (define label-fns (make-hash))
@@ -194,47 +250,9 @@
 
         ;;;; Statistics methods
 
-        (define (escapes-of name)
-          (hash-ref! escapes name make-gvector))
+        (define/public (used? name) (send stats used? name))
 
-        (define (applications-of name)
-          (hash-ref! applications name make-gvector))
-
-        (define (escape-count name)
-          (gvector-count (escapes-of name)))
-
-        (define (application-count name)
-          (gvector-count (applications-of name)))
-
-        (define/public (used? name)
-          (not (unused? name)))
-
-        (define/public (unused? name)
-          (and (zero? (escape-count name))
-               (zero? (application-count name))))
-
-        (define (first-order? label)
-          (zero? (escape-count label)))
-
-        (define/public (add-escape! name label)
-          (gvector-add! (hash-ref! escapes name make-gvector) label))
-
-        (define/public (remove-escape! name label)
-          (let/ec return
-            (define name-escapes (hash-ref! escapes name make-gvector))
-            (for ([(l i) (in-indexed name-escapes)])
-              (when (eq? l label)
-                (gvector-remove! name-escapes i)
-                (return (void))))))
-
-        (define (add-application! name label)
-          (gvector-add! (hash-ref! applications name make-gvector) label))
-
-        (define (transfer-usages! old new)
-          (for ([label (escapes-of old)]) (add-escape! new label))
-          (hash-remove! escapes old)
-          (for ([label (applications-of old)]) (add-application! new label))
-          (hash-remove! applications old))
+        (define/public (unused? name) (send stats unused? name))
 
         ;;;; Label-continuation-fn mapping methods
 
@@ -257,8 +275,8 @@
           (hash-set! entries fn-name entry))
 
         (define (mergeable-into? caller fn-name)
-          (and (first-order? fn-name)
-               (for/and ([usage-label (applications-of fn-name)])
+          (and (send stats first-order? fn-name)
+               (for/and ([usage-label (send stats applications-of fn-name)])
                  (eq? (label-fn usage-label) caller))))
 
         (define/public (fn-merge-into! fn-name)
@@ -272,12 +290,12 @@
                    (define name-worklist (hash-ref orig-worklists name))
                    (while (non-empty-queue? name-worklist)
                      (enqueue! fn-name-worklist (dequeue! name-worklist)))
-                   (remove-escape! n #f)
-                   (transfer-usages! fn-name n)
+                   (send stats remove-escape! n #f)
+                   (send stats transfer-usages! fn-name n)
                    (for ([label n*] [cont k*])
                      (set-label-fn! label fn-name)
                      (hash-set! conts label cont))
-                   (for ([usage-label (applications-of name)])
+                   (for ([usage-label (send stats applications-of name)])
                      (nanopass-case (CPS Cont) (hash-ref conts usage-label)
                        [(cont (,n* ...) ,s* ... (call ,x1 ,x2 ,a* ...))
                         (hash-set! conts usage-label
@@ -307,13 +325,13 @@
             [else atom]))
 
         (define (label-arglists label)
-          (for/list ([usage-label (applications-of label)])
+          (for/list ([usage-label (send stats applications-of label)])
             (nanopass-case (CPS Cont) (hash-ref conts usage-label)
               [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...)) a*]
               [else (error "unreachable")])))
 
         (define/public (propagate-params! label params)
-          (unless (or (not (first-order? label)) (empty? params))
+          (unless (or (not (send stats first-order? label)) (empty? params))
             (define (propagate-param! name . atoms)
               (unless (empty? atoms)
                 (when-let [atom (unify-atoms atoms)]
@@ -322,15 +340,15 @@
 
         (define/public (compact-params! label params)
           (with-output-language (CPS Cont)
-            (define keepers (map (lambda (param) (used? param)) params))
+            (define keepers (map (lambda (param) (send stats used? param)) params))
             (define (compact-arg! atom keep)
               (if keep
                 atom
                 (begin (EliminateAtom atom) #f)))
 
-            (if (and (first-order? label) (not (empty? params)))
+            (if (and (send stats first-order? label) (not (empty? params)))
               (begin
-                (for ([usage-label (applications-of label)])
+                (for ([usage-label (send stats applications-of label)])
                   (nanopass-case (CPS Cont) (hash-ref conts usage-label)
                     [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...))
                      (hash-set! conts usage-label
@@ -358,19 +376,19 @@
         (for-each-usage cfg
           (lambda (caller label callee cont args)
             (nanopass-case (CPS Var) callee
-              [(lex ,n) (add-application! n label)]
-              [(label ,n) (add-application! n label)]))
+              [(lex ,n) (send stats add-application! n label)]
+              [(label ,n) (send stats add-application! n label)]))
           (lambda (fn-name label callee args)
             (nanopass-case (CPS Var) callee
-              [(lex ,n) (add-application! n label)]
+              [(lex ,n) (send stats add-application! n label)]
               [(label ,n)
-               (add-application! n label)
+               (send stats add-application! n label)
                (orig-worklist-prepend! fn-name n)]))
           (lambda (fn-name label var)
             (nanopass-case (CPS Var) var
-              [(lex ,n) (add-escape! n label)]
+              [(lex ,n) (send stats add-escape! n label)]
               [(label ,n)
-               (add-escape! n label)
+               (send stats add-escape! n label)
                (orig-worklist-prepend! fn-name n)])))))
 
     (define transient-program (make-object transient-program% ir))
