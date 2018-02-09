@@ -145,6 +145,61 @@
        [else #f])])
   (foldl unify2 (first atoms) (rest atoms)))
 
+(struct $fn (labels entry))
+(struct $label ((cont #:mutable) (fn #:mutable)))
+
+(define symbol-table%
+  (class object%
+    ;;; Fields and initialization
+
+    (define fns (make-hash))
+    (define labels (make-hash))
+
+    (super-new)
+
+    ;;; Fn methods
+
+    (define (fn-ref fn-name) (hash-ref fns fn-name))
+
+    (define (fn-labels fn-name) ($fn-labels (fn-ref fn-name)))
+
+    (define (add-fn-label! fn-name label)
+      (set-add! ($fn-labels (fn-ref fn-name)) label))
+
+    (define (remove-fn-label! fn-name label)
+      (set-remove! ($fn-labels (fn-ref fn-name)) label))
+
+    ;;; Label methods
+
+    (define (label-ref label) (hash-ref labels label))
+
+    (define/public (cont-ref label) ($label-cont (label-ref label)))
+
+    (define/public (set-cont! label cont) (set-$label-cont! (label-ref label) cont))
+
+    (define/public (label-fn label) ($label-fn (label-ref label)))
+
+    ;;; High-level API
+
+    (define/public (add-fn! fn-name fn-labels conts entry)
+      (hash-set! fns fn-name ($fn (list->mutable-set fn-labels) entry))
+      (for ([label fn-labels] [cont conts])
+        (hash-set! labels label ($label cont fn-name))))
+
+    (define/public (move-label! label src dest)
+      (remove-fn-label! src label)
+      (add-fn-label! dest label)
+      (set-$label-fn! (label-ref label) dest))
+
+    (define/public (build-cfg fn-name)
+      (with-output-language (CPS CFG)
+        (match-define ($fn label-set entry) (fn-ref fn-name))
+        (define-values (labels conts)
+          (for/fold ([labels '()] [conts '()])
+                    ([label label-set])
+            (values (cons label labels) (cons (cont-ref label) conts))))
+        `(cfg ([,labels ,conts] ...) ,entry)))))
+
 (define statistics%
   (class object%
     ;;; Fields and initialization
@@ -225,9 +280,7 @@
 
         (define stats (new statistics%))
 
-        (define entries (make-hash))
-        (define label-fns (make-hash))
-        (define conts (make-hash))
+        (define symtab (new symbol-table%))
 
         (define substitution (make-hash))
         (define abstract-heap (make-hash))
@@ -242,7 +295,7 @@
         (define (worklist-pop! worklist)
           (if (non-empty-queue? worklist)
             (let ([label (dequeue! worklist)])
-              (values label (hash-ref conts label)))
+              (values label (send symtab cont-ref label)))
             (values #f #f)))
 
         (define/public (pop-orig-cont! fn-name)
@@ -256,28 +309,17 @@
 
         ;;;; Label-continuation-fn mapping methods
 
-        (define/public (cont-ref label)
-          (hash-ref conts label))
+        (define/public (cont-ref label) (send symtab cont-ref label))
 
-        (define/public (set-cont! label cont)
-          (hash-set! conts label cont))
-
-        (define (label-fn label)
-          (hash-ref label-fns label))
-
-        (define (set-label-fn! label fn-name)
-          (hash-set! label-fns label fn-name))
+        (define/public (set-cont! label cont) (send symtab set-cont! label cont))
 
         (define/public (enter-function! fn-name labels fn-conts entry)
-          (for ([label labels] [cont fn-conts])
-            (set-label-fn! label fn-name)
-            (hash-set! conts label cont))
-          (hash-set! entries fn-name entry))
+          (send symtab add-fn! fn-name labels fn-conts entry))
 
         (define (mergeable-into? caller fn-name)
           (and (send stats first-order? fn-name)
                (for/and ([usage-label (send stats applications-of fn-name)])
-                 (eq? (label-fn usage-label) caller))))
+                 (eq? (send symtab label-fn usage-label) caller))))
 
         (define/public (fn-merge-into! fn-name)
           (with-output-language (CPS Cont)
@@ -287,18 +329,18 @@
                          #:when (mergeable-into? fn-name name))
                 (nanopass-case (CPS Expr) expr
                   [(fn (cfg ([,n* ,k*] ...) ,n))
+                   (enter-function! name n* k* n) ; HACK?
                    (define name-worklist (hash-ref orig-worklists name))
                    (while (non-empty-queue? name-worklist)
                      (enqueue! fn-name-worklist (dequeue! name-worklist)))
                    (send stats remove-escape! n #f)
                    (send stats transfer-usages! fn-name n)
                    (for ([label n*] [cont k*])
-                     (set-label-fn! label fn-name)
-                     (hash-set! conts label cont))
+                     (send symtab move-label! label name fn-name))
                    (for ([usage-label (send stats applications-of name)])
-                     (nanopass-case (CPS Cont) (hash-ref conts usage-label)
+                     (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
                        [(cont (,n* ...) ,s* ... (call ,x1 ,x2 ,a* ...))
-                        (hash-set! conts usage-label
+                        (send symtab set-cont! usage-label
                           `(cont (,n* ...) ,s* ... (continue (label ,n) ,x2 ,a* ...)))]
                        [else (error "unreachable")]))
                    name]
@@ -306,27 +348,20 @@
             (for-each (cute hash-remove! abstract-heap <>) merged-names)
             (not (empty? merged-names))))
 
-        (define/public (build-cfg name)
-          (define-values (labels cfg-conts)
-            (for/fold ([labels '()] [cfg-conts '()])
-                      ([(label fn-name) label-fns] #:when (eq? fn-name name))
-              (values (cons label labels)
-                      (cons (hash-ref conts label) cfg-conts))))
-          (with-output-language (CPS CFG)
-            `(cfg ([,labels ,cfg-conts] ...) ,(hash-ref entries name))))
+        (define/public (build-cfg name) (send symtab build-cfg name))
 
         ;;;; Environment management
 
         (define/public (propagated fn-name name default)
           (define atom (hash-ref substitution name default))
           (nanopass-case (CPS Atom) atom
-            [(label ,n) (guard (not (eq? (label-fn n) fn-name)))
+            [(label ,n) (guard (not (eq? (send symtab label-fn n) fn-name)))
              default]
             [else atom]))
 
         (define (label-arglists label)
           (for/list ([usage-label (send stats applications-of label)])
-            (nanopass-case (CPS Cont) (hash-ref conts usage-label)
+            (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
               [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...)) a*]
               [else (error "unreachable")])))
 
@@ -349,9 +384,9 @@
             (if (and (send stats first-order? label) (not (empty? params)))
               (begin
                 (for ([usage-label (send stats applications-of label)])
-                  (nanopass-case (CPS Cont) (hash-ref conts usage-label)
+                  (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
                     [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...))
-                     (hash-set! conts usage-label
+                     (send symtab cont-set! usage-label
                        `(cont (,n* ...)
                           ,s* ...
                           (continue ,x1 ,(filter-map compact-arg! a* keepers) ...)))]
