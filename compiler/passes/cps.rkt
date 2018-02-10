@@ -307,6 +307,10 @@
 
         (define/public (unused? name) (send stats unused? name))
 
+        (define/public (add-escape! name label) (send stats add-escape! name label))
+
+        (define/public (remove-escape! name label) (send stats remove-escape! name label))
+
         ;;;; Label-continuation-fn mapping methods
 
         (define/public (cont-ref label) (send symtab cont-ref label))
@@ -334,17 +338,17 @@
                    (while (non-empty-queue? name-worklist)
                      (enqueue! fn-name-worklist (dequeue! name-worklist)))
                    (send stats remove-escape! n #f)
-                   (send stats transfer-usages! fn-name n)
+                   (send stats transfer-usages! name n)
                    (for ([label n*] [cont k*])
                      (send symtab move-label! label name fn-name))
-                   (for ([usage-label (send stats applications-of name)])
+                   (for ([usage-label (send stats applications-of n)])
                      (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
                        [(cont (,n* ...) ,s* ... (call ,x1 ,x2 ,a* ...))
                         (send symtab set-cont! usage-label
                           `(cont (,n* ...) ,s* ... (continue (label ,n) ,x2 ,a* ...)))]
-                       [else (error "unreachable")]))
+                       [else (error "fn-merge-into!: callsite not a call")]))
                    name]
-                  [else (error "unreachable")])))
+                  [else (error "fn-merge-into!: tried to inline non-function")])))
             (for-each (cute hash-remove! abstract-heap <>) merged-names)
             (not (empty? merged-names))))
 
@@ -363,7 +367,8 @@
           (for/list ([usage-label (send stats applications-of label)])
             (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
               [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...)) a*]
-              [else (error "unreachable")])))
+              [(cont (,n* ...) ,s* ... ,t)
+               (error "label-arglists: label callsite is not a continue:" label t)])))
 
         (define/public (propagate-params! label params)
           (unless (or (not (send stats first-order? label)) (empty? params))
@@ -386,7 +391,7 @@
                 (for ([usage-label (send stats applications-of label)])
                   (nanopass-case (CPS Cont) (send symtab cont-ref usage-label)
                     [(cont (,n* ...) ,s* ... (continue ,x1 ,a* ...))
-                     (send symtab cont-set! usage-label
+                     (send symtab set-cont! usage-label
                        `(cont (,n* ...)
                           ,s* ...
                           (continue ,x1 ,(filter-map compact-arg! a* keepers) ...)))]
@@ -454,8 +459,8 @@
 
     ;;;;
 
-    (define (eliminate-label-ref! label)
-      (send transient-program remove-escape! label)
+    (define (eliminate-label-ref! label usage-label)
+      (send transient-program remove-escape! label usage-label)
       (when (send transient-program unused? label)
         (EliminateCont (send transient-program cont-ref label) label))))
 
@@ -589,10 +594,12 @@
   ;;; continuation (i.e. some `(label ,n) Var) is eliminated.
 
   (EliminateCFG : CFG (ir) -> * ()
-    [(cfg ([,n* ,k*] ...) ,n) (eliminate-label-ref! n)])
+    [(cfg ([,n* ,k*] ...) ,n) (eliminate-label-ref! n (current-label))])
 
-  (EliminateCont : Cont (ir) -> * ()
-    [(cont (,n* ...) ,s* ... ,t) (for-each EliminateStmt s*) (EliminateTransfer t)])
+  (EliminateCont : Cont (ir label) -> * ()
+    [(cont (,n* ...) ,s* ... ,t)
+     (parameterize ([current-label label])
+       (for-each EliminateStmt s*) (EliminateTransfer t))])
 
   (EliminateStmt : Stmt (ir) -> * ()
     [(def ,n ,e) (EliminateExpr e)]
@@ -617,7 +624,7 @@
 
   (EliminateVar : Var (ir) -> * ()
     [(lex ,n) (send transient-program remove-escape! n (current-label))]
-    [(label ,n) (eliminate-label-ref! n)])
+    [(label ,n) (eliminate-label-ref! n (current-label))])
 
   ;;;;
 
