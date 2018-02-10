@@ -122,7 +122,10 @@
     (hash 'label-table label-table 'var-table var-table)))
 
 ;; HACK:
-(define (primops:pure? _) #f)
+(define (primops:pure? opcode)
+  (case opcode
+    [(__boxNew __tupleNew __fnNew __contNew __denvNew __recNew) #t]
+    [else #f]))
 
 (define/nanopass (CPS Expr) (pure? ir)
   [(fn ,blocks) #t]
@@ -265,6 +268,9 @@
       (for ([label (applications-of old)]) (add-application! new label))
       (hash-remove! applications old))))
 
+;; FIXME: Since return points are processed before callee bodies, their parameters do not get
+;;        propagated and returns cannot be beta-contracted (without residualizing param `def`:s).
+;;
 ;; * Copy and constant propagation including Cont parameters.
 ;; * Constant folding.
 ;; * Integration of first-order functions into their only direct caller.
@@ -393,10 +399,15 @@
         (define/public (compact-params! label params)
           (with-output-language (CPS Cont)
             (define keepers (map (lambda (param) (send stats used? param)) params))
-            (define (compact-arg! atom keep)
+            (define ((compact-arg! usage-label) atom keep)
               (if keep
                 atom
-                (begin (EliminateAtom atom) #f)))
+                (begin
+                  (nanopass-case (CPS Atom) atom
+                    [(lex ,n) (send stats remove-escape! n usage-label)]
+                    [(label ,n) (send stats remove-escape! n usage-label)]
+                    [(const ,c) (void)])
+                  #f)))
 
             (if (and (send stats first-order? label) (not (empty? params)))
               (begin
@@ -406,7 +417,7 @@
                      (send symtab set-cont! usage-label
                        `(cont (,n* ...)
                           ,s* ...
-                          (continue ,x1 ,(filter-map compact-arg! a* keepers) ...)))]
+                          (continue ,x1 ,(filter-map (compact-arg! usage-label) a* keepers) ...)))]
                     [else (error "compact-params: unreachable code reached")]))
                 (filter-map (lambda (param keep) (and keep param)) params keepers)) ; OPTIMIZE
               params)))
