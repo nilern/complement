@@ -239,6 +239,14 @@
     (define/public (add-application! name label)
       (gvector-add! (hash-ref! applications name make-gvector) label))
 
+    (define/public (remove-application! name label)
+      (let/ec return
+        (define name-applications (hash-ref! applications name make-gvector))
+        (for ([(l i) (in-indexed name-applications)])
+          (when (eq? l label)
+            (gvector-remove! name-applications i)
+            (return (void))))))
+
     ;;; High-level API
 
     (define/public (used? name)
@@ -310,6 +318,10 @@
         (define/public (add-escape! name label) (send stats add-escape! name label))
 
         (define/public (remove-escape! name label) (send stats remove-escape! name label))
+
+        (define/public (add-application! name label) (send stats add-application! name label))
+
+        (define/public (remove-application! name label) (send stats remove-application! name label))
 
         ;;;; Label-continuation-fn mapping methods
 
@@ -459,8 +471,10 @@
 
     ;;;;
 
-    (define (eliminate-label-ref! label usage-label)
-      (send transient-program remove-escape! label usage-label)
+    (define (eliminate-label-ref! application label usage-label)
+      (if application
+        (send transient-program remove-application! label usage-label)
+        (send transient-program remove-escape! label usage-label))
       (when (send transient-program unused? label)
         (EliminateCont (send transient-program cont-ref label) label))))
 
@@ -526,18 +540,18 @@
     [,a (FoldAtom a)])
 
   (FoldTransfer : Transfer (ir) -> Transfer ()
-    [(continue ,x ,a* ...) `(continue ,(FoldVar x) ,(map FoldAtom a*) ...)]
+    [(continue ,x ,a* ...) `(continue ,(FoldCallee x) ,(map FoldAtom a*) ...)]
     [(if ,a? ,x1 ,x2)
      (define condition (FoldAtom a?))
      (nanopass-case (CPS Atom) condition
        [(const ,c) (guard (eqv? c #t))
         (EliminateVar x2)
-        `(continue ,(FoldVar x1))]
+        `(continue ,(FoldCallee x1))]
        [(const ,c) (guard (eqv? c #f))
         (EliminateVar x1)
-        `(continue ,(FoldVar x2))]
-       [else `(if ,condition ,(FoldVar x1) ,(FoldVar x2))])]
-    [(call ,x1 ,x2 ,a* ...) `(call ,(FoldVar x1) ,(FoldVar x2) ,(map FoldAtom a*) ...)]
+        `(continue ,(FoldCallee x2))]
+       [else `(if ,condition ,(FoldCallee x1) ,(FoldCallee x2))])]
+    [(call ,x1 ,x2 ,a* ...) `(call ,(FoldCallee x1) ,(FoldVar x2) ,(map FoldAtom a*) ...)]
     [(ffncall ,x1 ,x2 ,a* ...) `(ffncall ,(FoldVar x1) ,(FoldVar x2) ,(map FoldAtom a*) ...)]
     [(raise ,a) `(raise ,(FoldAtom a))]
     [(halt ,a) `(halt ,(FoldAtom a))])
@@ -554,6 +568,17 @@
        (begin
          (DiscoverAtom ir*)
          (EliminateVar ir)
+         ir*))]
+    [(label ,n) ir])
+
+  (FoldCallee : Var (ir) -> Var ()
+    [(lex ,n)
+     (define ir* (send transient-program propagated (current-fn) n ir))
+     (if (eq? ir ir*)
+       ir*
+       (begin
+         (DiscoverCallee ir*)
+         (EliminateCallee ir)
          ir*))]
     [(label ,n) ir])
 
@@ -594,7 +619,7 @@
   ;;; continuation (i.e. some `(label ,n) Var) is eliminated.
 
   (EliminateCFG : CFG (ir) -> * ()
-    [(cfg ([,n* ,k*] ...) ,n) (eliminate-label-ref! n (current-label))])
+    [(cfg ([,n* ,k*] ...) ,n) (eliminate-label-ref! #f n (current-label))])
 
   (EliminateCont : Cont (ir label) -> * ()
     [(cont (,n* ...) ,s* ... ,t)
@@ -624,7 +649,11 @@
 
   (EliminateVar : Var (ir) -> * ()
     [(lex ,n) (send transient-program remove-escape! n (current-label))]
-    [(label ,n) (eliminate-label-ref! n (current-label))])
+    [(label ,n) (eliminate-label-ref! #f n (current-label))])
+
+  (EliminateCallee : Var (ir) -> * ()
+    [(lex ,n) (send transient-program remove-application! n (current-label))]
+    [(label ,n) (eliminate-label-ref! #t n (current-label))])
 
   ;;;;
 
@@ -640,6 +669,10 @@
   (DiscoverVar : Var (ir) -> * ()
     [(lex ,n) (send transient-program add-escape! n (current-label))]
     [(label ,n) (send transient-program add-escape! n (current-label))])
+
+  (DiscoverCallee : Var (ir) -> * ()
+    [(lex ,n) (send transient-program add-application! n (current-label))]
+    [(label ,n) (send transient-program add-application! n (current-label))])
 
   ;;;;
 
