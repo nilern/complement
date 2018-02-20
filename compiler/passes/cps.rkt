@@ -178,6 +178,10 @@
 
     (define/public (cont-ref label) ($label-cont (label-ref label)))
 
+    (define/public (cont-forget! fn-name label)
+      (remove-fn-label! fn-name label)
+      (hash-remove! labels label))
+
     (define/public (set-cont! label cont) (set-$label-cont! (label-ref label) cont))
 
     (define/public (label-fn label) ($label-fn (label-ref label)))
@@ -252,12 +256,14 @@
 
     ;;; High-level API
 
+    (define/public (total-usages name)
+      (+ (escape-count name) (application-count name)))
+
     (define/public (used? name)
       (not (unused? name)))
 
     (define/public (unused? name)
-      (and (zero? (escape-count name))
-           (zero? (application-count name))))
+      (zero? (total-usages name)))
 
     (define/public (first-order? label)
       (zero? (escape-count label)))
@@ -266,7 +272,11 @@
       (for ([label (escapes-of old)]) (add-escape! new label))
       (hash-remove! escapes old)
       (for ([label (applications-of old)]) (add-application! new label))
-      (hash-remove! applications old))))
+      (hash-remove! applications old))
+
+    (define/public (cont-forget! label)
+      (hash-remove! escapes label)
+      (hash-remove! applications label))))
 
 ;; FIXME: Since return points are processed before callee bodies, their parameters do not get
 ;;        propagated and returns cannot be beta-contracted (without residualizing param `def`:s).
@@ -317,6 +327,8 @@
 
         ;;;; Statistics methods
 
+        (define/public (total-usages name) (send stats total-usages name))
+
         (define/public (used? name) (send stats used? name))
 
         (define/public (unused? name) (send stats unused? name))
@@ -334,6 +346,10 @@
         (define/public (cont-ref label) (send symtab cont-ref label))
 
         (define/public (set-cont! label cont) (send symtab set-cont! label cont))
+
+        (define/public (cont-forget! fn-name label)
+          (send symtab cont-forget! fn-name label)
+          (send stats cont-forget! label))
 
         (define/public (enter-function! fn-name labels fn-conts entry)
           (send symtab add-fn! fn-name labels fn-conts entry))
@@ -603,9 +619,14 @@
     [(cont (,n* ...) ,s* ... ,t)
      (parameterize ([current-label label])
        (and (send transient-program used? (current-label))
-            (let* ([stmts (reverse (filter-map CompactStmt (reverse s*)))] ; OPTIMIZE
-                   [params (send transient-program compact-params! (current-label) n*)])
-              `(cont (,params ...) ,stmts ... ,t))))])
+            (let*-values ([(stmts* transfer) (CompactTransfer t)])
+              (let* ([stmts (foldr (lambda (stmt stmts*)
+                                     (if-let [stmt* (CompactStmt stmt)]
+                                       (cons stmt* stmts*)
+                                       stmts*))
+                                   stmts* s*)]
+                     [params (send transient-program compact-params! (current-label) n*)])
+                `(cont (,params ...) ,stmts ... ,transfer)))))])
 
   (CompactStmt : Stmt (ir) -> Stmt ()
     [(def ,n (fn ,blocks)) (guard (send transient-program integrated? n)) #f]
@@ -622,6 +643,15 @@
   (CompactExpr : Expr (ir name) -> Expr ()
     [(fn ,blocks) `(fn ,(CFG blocks name))]
     [else ir])
+
+  (CompactTransfer : Transfer (ir) -> Stmt (transfer)
+    [(continue (label ,n)) (guard (= (send transient-program total-usages n) 1))
+     (nanopass-case (CPS Cont) (send transient-program cont-ref n)
+       [(cont () ,s* ... ,t)
+        (send transient-program cont-forget! (current-fn) n)
+        (values s* t)]
+       [else (error "unreachable code reached in CompactTransfer")])]
+    [else (values '() ir)])
 
   ;;;;
 
