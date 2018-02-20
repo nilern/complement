@@ -12,7 +12,8 @@
          nanopass/base
 
          "../langs.rkt"
-         (only-in "../util.rkt" zip-hash unzip-hash while if-let when-let while-let-values)
+         (only-in "../util.rkt" zip-hash unzip-hash gvector-filter!
+                                while if-let if-let-values when-let while-let-values)
          (only-in "../nanopass-util.rkt" define/nanopass))
 
 (define-pass for-each-usage : CPS (ir callf continuef escapef) -> * ()
@@ -276,7 +277,13 @@
 
     (define/public (cont-forget! label)
       (hash-remove! escapes label)
-      (hash-remove! applications label))))
+      (for ([(_ escapes*) escapes]) ; OPTIMIZE
+        (gvector-filter! (cute eq? <> label) escapes*))
+      (hash-remove! applications label)
+      (for ([(_ applications*) applications]) ; OPTIMIZE
+        (gvector-filter! (cute eq? <> label) applications*)))))
+
+(struct $non-static-eval exn:fail ())
 
 ;; FIXME: Since return points are processed before callee bodies, their parameters do not get
 ;;        propagated and returns cannot be beta-contracted (without residualizing param `def`:s).
@@ -364,7 +371,8 @@
             (define fn-name-worklist (hash-ref orig-worklists fn-name))
             (define merged-names
               (for/list ([(name expr) abstract-heap]
-                         #:when (mergeable-into? fn-name name))
+                         #:when (and (not (vector? expr)) ; HACK
+                                     (mergeable-into? fn-name name)))
                 (nanopass-case (CPS Expr) expr
                   [(fn (cfg ([,n* ,k*] ...) ,n))
                    (enter-function! name n* k* n) ; HACK?
@@ -438,9 +446,16 @@
                 (filter-map (lambda (param keep) (and keep param)) params keepers)) ; OPTIMIZE
               params)))
 
+        (define/public (load name)
+          (if (hash-has-key? abstract-heap name)
+            (values #t (hash-ref abstract-heap name))
+            (values #f #f)))
+
         (define/public (allocate! name expr)
           (nanopass-case (CPS Expr) expr
             [(fn ,blocks) (hash-set! abstract-heap name expr)]
+            [(primcall ,p ,a* ...) (guard (eq? p '__tupleNew))
+             (hash-set! abstract-heap name (list->vector a*))]
             [(primcall ,p ,a* ...) (void)] ; TODO
             [,a (hash-set! substitution name expr)]))
 
@@ -493,8 +508,26 @@
                 (with-output-language (CPS Stmt) `(def ,name ,expr))
                 expr))))))
 
-    ;; TODO:
-    (define (constant-fold op args) #f)
+    (define (constant-fold op args)
+      (define/nanopass (CPS Atom) (eval-atom ir)
+        [(const ,c) c]
+        [(lex ,n)
+         (if-let-values [(_ v) (send transient-program load n)]
+           v
+           (raise ($non-static-eval "not in abstract heap" (current-continuation-marks))))]
+        [(label ,n) (raise ($non-static-eval "label" (current-continuation-marks)))])
+
+      (with-output-language (CPS Expr)
+        (with-handlers ([$non-static-eval? (lambda (_) #f)])
+          (match* (op (map eval-atom args))
+            [('__tupleLength `(,(? vector? tup))) `(const ,(vector-length tup))]
+            [('__tupleGet `(,(? vector? tup) ,(? fixnum? i)))
+             (if (< i (vector-length tup))
+               (vector-ref tup i)
+               #f)]
+            [('__iEq `(,(? fixnum? a) ,(? fixnum? b))) `(const ,(= a b))]
+            ;; TODO: more operations...
+            [(_ _) #f]))))
 
     ;;;;
 

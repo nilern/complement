@@ -1,8 +1,8 @@
 #lang racket/base
 
-(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by
+(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by gvector-filter!
          while if-let when-let while-let if-let-values when-let-values while-let-values)
-(require (only-in srfi/26 cute))
+(require (only-in srfi/26 cute) data/gvector)
 
 ;; Exception type for unbound variables in interpreters.
 (struct exn:unbound exn:fail ())
@@ -29,6 +29,17 @@
       (hash-update groups (f v) (cute cons v <>) '())))
   (for/hash ([(k v) groups])
     (values k (reverse v))))
+
+;; `gvector-remove!` all elements from `gvec` for which `(pred elem)` does not return #f.
+(define (gvector-filter! pred gvec)
+  (let loop ([i 0])
+    (if (< i (gvector-count gvec))
+      (if (pred (gvector-ref gvec i))
+        (begin
+          (gvector-remove! gvec i)
+          (loop i))
+        (loop (+ i 1)))
+      (void))))
 
 ;; While loop
 (define-syntax while
