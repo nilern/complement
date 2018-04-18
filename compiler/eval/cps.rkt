@@ -3,7 +3,10 @@
 (provide eval-CPS)
 (require racket/match racket/hash racket/undefined (only-in srfi/26 cute)
          nanopass/base
-         "../util.rkt" "../langs.rkt" (prefix-in primops: "../primops.rkt"))
+
+         "../util.rkt"
+         "../langs.rkt"
+         (only-in "../primops.rkt" primapply))
 
 ;;;; Values
 
@@ -61,9 +64,7 @@
     (define (apply-fn f args)
       (match-let* ([(value:$fn labels conts entry env) f]
                    [kenv (zip-hash labels conts)])
-        (apply-label (hash-ref kenv entry) env kenv args)))
-
-    (define primapply (primops:primapply (hash-union primops:base-ops primops:denv-ops))))
+        (apply-label (hash-ref kenv entry) env kenv args))))
 
   (CFG : CFG (ir) -> * ()
     [(cfg ([,n* ,k*] ...) ,n)

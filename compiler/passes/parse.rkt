@@ -11,7 +11,7 @@
 
          "../langs.rkt")
 
-;;; TODO: Fill out missing syntax
+;;; TODO: Fill out missing syntax ("(- foo)", "(foo *)", "(_ + 5)" etc.)
 
 ;;;; # Lexer
 

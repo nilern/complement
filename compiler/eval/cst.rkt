@@ -11,7 +11,7 @@
 
          (only-in "../util.rkt" zip-hash)
          "../langs.rkt"
-         (prefix-in primops: "../primops.rkt"))
+         (only-in "../primops.rkt" primapply))
 
 ;;;; Value
 
@@ -96,8 +96,6 @@
       (nanopass-case (Cst Var) var
         [(lex ,n) (env:ref lenv n)]
         [(dyn ,n) (env:ref denv n)]))
-
-    (define primapply (primops:primapply primops:base-ops))
 
     (define/match (apply _ _* _** _***)
       [((value:$closure (cons case cases) lenv) args cont denv)

@@ -5,20 +5,9 @@
          nanopass/base
 
          (only-in "../util.rkt" zip-hash)
-         "../langs.rkt" (prefix-in primops: "../primops.rkt")
+         "../langs.rkt"
+         (prefix-in primops: "../primops.rkt")
          (prefix-in env: (submod "cps.rkt" env)))
-
-;;;; Values
-
-(module value racket/base
-  (provide $fn $cont)
-
-  (struct $fn (code env) #:transparent)
-  (struct $cont (code env) #:transparent))
-
-;;;; Eval
-
-(require (prefix-in value: (submod "." value)))
 
 ;; TODO: dominator scoping rule
 (define-pass eval-CPCPS : CPCPS (ir) -> * ()
@@ -37,17 +26,11 @@
                         (for/hash ([name n*] [arg args]) (values name arg))))
          (eval-block s* t next-fn env* kenv fenv rfenv)]))
 
-    (define primapply
-      (let ([primapply* (primops:primapply (hash-union primops:base-ops primops:denv-ops))])
-        (λ (fenv op args)
-          (match* (op args)
-            [('__fnNew (cons fn freevars)) (value:$fn fn (list->vector freevars))]
-            [('__fnCode (list (value:$fn code _))) (hash-ref fenv code)]
-            [('__fnGet (list (value:$fn _ freevars) i)) (vector-ref freevars i)]
-            [('__contNew (cons cont freevars)) (value:$cont cont (list->vector freevars))]
-            [('__contCode (list (value:$cont code _))) code]
-            [('__contGet (list (value:$cont _ freevars) i)) (vector-ref freevars i)]
-            [(_ _) (primapply* op args)])))))
+    (define (primapply fenv op args)
+      (let ([res (primops:primapply op args)])
+        (if (eq? op '__fnCode)
+          (hash-ref fenv res) ; HACK (?)
+          res))))
 
   (Program : Program (ir) -> * ()
     [(prog ([,n* ,blocks*] ...) ,n)
