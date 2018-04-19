@@ -1,87 +1,92 @@
 #lang racket/base
 
 (provide eval-CPCPS)
-(require racket/match racket/undefined (only-in racket/hash hash-union) (only-in srfi/26 cute)
+(require racket/match
+         (only-in srfi/26 cute)
          nanopass/base
 
-         (only-in "../util.rkt" zip-hash)
+         (only-in "../util.rkt" clj-merge zip-hash)
          "../langs.rkt"
-         (prefix-in primops: "../primops.rkt")
-         (prefix-in env: (submod "cps.rkt" env)))
+         (only-in "../primops.rkt" primapply))
 
 ;; TODO: dominator scoping rule
-(define-pass eval-CPCPS : CPCPS (ir) -> * ()
+(define-pass eval-CPCPS : CPCPS (prog) -> * ()
   (definitions
-    (define (eval-block stmts transfer curr-fn env kenv fenv rfenv)
-      (match stmts
-        [(cons stmt stmts*) (Stmt stmt curr-fn env kenv fenv rfenv stmts* transfer)]
-        ['() (Transfer transfer curr-fn env kenv fenv rfenv)]))
+    ;; Maps from continuation labels to IR code and from fn labels to entry continuation labels.
+    (define-values (kenv fenv)
+      (nanopass-case (CPCPS Program) prog
+        [(prog ([,n* ,blocks*] ...) ,n)
+         (for/fold ([kenv (hash)]
+                    [fenv (hash)])
+                   ([name n*] [fn-cfg blocks*])
+           (nanopass-case (CPCPS CFG) fn-cfg
+             [(cfg ([,n1* ,k*] ...) (,n2* ...))
+              (values (clj-merge kenv (zip-hash n1* k*))
+                      (hash-set fenv name (car n2*)))]))]))
 
-    (define (goto k curr-fn env kenv fenv rfenv args)
-      (nanopass-case (CPCPS Cont) (hash-ref kenv k)
+    ;; A subcont is essentially the remainder of the cont being executed.
+    (struct $subcont (stmts transfer))
+
+    ;; Move to the next Stmt (or Transfer).
+    (define (sub-continue subcont curr-fn env)
+      (match subcont
+        [($subcont (cons stmt stmts) transfer)
+         (Stmt stmt curr-fn env ($subcont stmts transfer))]
+        [($subcont '() transfer) (Transfer transfer curr-fn env)]))
+
+    ;; A code pointer consists of fn and continuation labels.
+    (struct $code-ptr (fn-label cont-label))
+
+    ;; Jump to the code pointer and bind args to params. Implements function calls, jumps to
+    ;; local continuations and returns.
+    (define (goto code-ptr curr-fn env args)
+      (match-define ($code-ptr fn-label cont-label) code-ptr)
+      (nanopass-case (CPCPS Cont) (hash-ref kenv cont-label)
         [(cont (,n* ...) ,s* ... ,t)
-         (define next-fn (hash-ref rfenv k))
-         (define env* (if (eq? next-fn curr-fn)
-                        (env:push-args env n* args)
-                        (for/hash ([name n*] [arg args]) (values name arg))))
-         (eval-block s* t next-fn env* kenv fenv rfenv)]))
+         (let ([env (let ([env* (zip-hash n* args)])
+                      (if (eq? fn-label curr-fn)
+                        (clj-merge env env*)
+                        env*))])
+           (sub-continue ($subcont s* t) fn-label env))])))
 
-    (define (primapply fenv op args)
-      (let ([res (primops:primapply op args)])
-        (if (eq? op '__fnCode)
-          (hash-ref fenv res) ; HACK (?)
-          res))))
-
+  ;; Run the program.
   (Program : Program (ir) -> * ()
     [(prog ([,n* ,blocks*] ...) ,n)
-     (define-values (kenv fenv rfenv)
-       (for/fold ([kenv (hash)]
-                  [fenv (hash)]
-                  [rfenv (hash)])
-                 ([name n*] [fn-cfg blocks*])
-         (nanopass-case (CPCPS CFG) fn-cfg
-           [(cfg ([,n1* ,k*] ...) (,n2* ...))
-            (define entry (car n2*))
-            (values (hash-union kenv (zip-hash n1* k*))
-                    (hash-set fenv name entry)
-                    (for/fold ([rfenv rfenv])
-                              ([label n1*])
-                      (hash-set rfenv label name)))])))
-     (goto (hash-ref fenv n) n (env:empty) kenv fenv rfenv '())])
+     (goto ($code-ptr n (hash-ref fenv n)) n (hash) '())])
 
-  (Stmt : Stmt (ir curr-fn env kenv fenv rfenv stmts transfer) -> * ()
-    [(def ,n ,e) (Expr e curr-fn env kenv fenv rfenv n stmts transfer)]
-    [,e (Expr e curr-fn env kenv fenv rfenv #f stmts transfer)])
+  ;; Execute the Stmt and the rest of the cont.
+  (Stmt : Stmt (stmt curr-fn env subcont) -> * ()
+    [(def ,n ,e) (sub-continue subcont curr-fn (hash-set env n (Expr e curr-fn env)))]
+    [,e
+     (Expr e curr-fn env)
+     (sub-continue subcont curr-fn env)])
 
-  (Expr : Expr (ir curr-fn env kenv fenv rfenv name stmts transfer) -> * ()
-    [,a
-     (define res (Atom a env kenv fenv))
-     (define env* (if name (env:insert env name res) env))
-     (eval-block stmts transfer curr-fn env* kenv fenv rfenv)]
-    [(primcall ,p ,a* ...)
-     (define res (primapply fenv p (map (cute Atom <> env kenv fenv) a*)))
-     (define env* (if name (env:insert env name res) env))
-     (eval-block stmts transfer curr-fn env* kenv fenv rfenv)])
+  ;; Evaluate and expression (and perform side effects).
+  (Expr : Expr (expr curr-fn env) -> * ()
+    [,a                    (Atom a curr-fn env)]
+    [(primcall ,p ,a* ...) (primapply p (map (cute Atom <> curr-fn env) a*))])
 
-  (Transfer : Transfer (ir curr-fn env kenv fenv rfenv) -> * ()
+  ;; Perform a Transfer.
+  (Transfer : Transfer (_ curr-fn env) -> * ()
     [(goto ,x ,a* ...)
-     (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv
-           (map (cute Atom <> env kenv fenv) a*))]
+     (goto (Var x curr-fn env) curr-fn env (map (cute Atom <> curr-fn env) a*))]
     [(ffncall ,x ,a* ...) (error "unimplemented")]
     [(if ,a? ,x1 ,x2)
      (define x
-       (match (Atom a? env kenv fenv)
+       (match (Atom a? curr-fn env)
          [#t x1]
          [#f x2]))
-     (goto (Var x env kenv fenv) curr-fn env kenv fenv rfenv '())]
-    [(halt ,a) (Atom a env kenv fenv)]
+     (goto (Var x curr-fn env) curr-fn env '())]
+    [(halt ,a) (Atom a curr-fn env)]
     [(raise ,a) (error "unimplemented")])
 
-  (Atom : Atom (ir env kenv fenv) -> * ()
+  ;; Evaluate an Atom.
+  (Atom : Atom (_ curr-fn env) -> * ()
     [(const ,c) c]
-    [,x (Var x env kenv fenv)])
+    [,x         (Var x curr-fn env)])
 
-  (Var : Var (ir env kenv fenv) -> * ()
-    [(lex ,n) (env:ref env n)]
-    [(label ,n) n]
-    [(proc ,n) n]))
+  ;; Look up the value of a Var. `label` and `proc` produce appropriate $code-ptr:s.
+  (Var : Var (_ curr-fn env) -> * ()
+    [(lex ,n)   (hash-ref env n)]
+    [(label ,n) ($code-ptr curr-fn n)]
+    [(proc ,n)  ($code-ptr n (hash-ref fenv n))]))
