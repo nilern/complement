@@ -1,8 +1,10 @@
 #lang racket/base
 
-(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-group-by gvector-filter!
+(provide exn:unbound exn:unbound? zip-hash unzip-hash clj-merge clj-group-by gvector-filter!
          while if-let when-let while-let if-let-values when-let-values while-let-values)
-(require (only-in srfi/26 cute) data/gvector)
+(require (only-in racket/hash hash-union)
+         data/gvector
+         (only-in srfi/26 cute))
 
 ;; Exception type for unbound variables in interpreters.
 (struct exn:unbound exn:fail ())
@@ -19,6 +21,10 @@
               ([(k v) kvs])
       (values (cons k ks) (cons v vs))))
   (values (reverse ks) (reverse vs)))
+
+;; Merge two hashes, using the value of the latter for keys that both hashes contain.
+(define (clj-merge kvs kvs*)
+  (hash-union kvs kvs* #:combine (lambda (_ v) v)))
 
 ;; Apply `f` to each element of `coll` and create a hash where the keys are the distinct values
 ;; of those applications and the value behind a key is a list of the elements that produced the key.
