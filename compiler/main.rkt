@@ -28,6 +28,7 @@
 
            (only-in "eval/cst.rkt" eval-Cst)
            (only-in "eval/lex-cst.rkt" eval-LexCst)
+           (only-in "eval/ast.rkt" eval-Ast)
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS))
 
@@ -50,7 +51,7 @@
       'alphatize         (pass '(parse) alphatize eval-Cst)
       'lex-straighten    (pass '(alphatize) lex-straighten eval-Cst)
       'introduce-dyn-env (pass '(lex-straighten) introduce-dyn-env eval-LexCst)
-      'add-dispatch      (pass '(introduce-dyn-env) add-dispatch #f)
+      'add-dispatch      (pass '(introduce-dyn-env) add-dispatch eval-Ast)
 
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)
       'cps-shrink       (pass '(cps-convert) identity #|cps-shrink|# eval-CPS)

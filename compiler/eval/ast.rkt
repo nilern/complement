@@ -1,23 +1,22 @@
 #lang racket/base
 
-(provide eval-LexCst)
+(provide eval-Ast)
 (require racket/match
          (only-in racket/list filter-map)
          (only-in racket/undefined undefined)
-         (only-in threading ~>)
          nanopass/base
 
-         (only-in "../langs.rkt" LexCst)
          (prefix-in cont: "cont.rkt")
+         (only-in "../langs.rkt" Ast)
          (only-in "../primops.rkt" primapply)
-         (only-in "../util.rkt" zip-hash clj-merge)
+         (only-in "../util.rkt" clj-merge zip-hash)
          (only-in "../nanopass-util.rkt" define/nanopass))
 
-(define-pass eval-LexCst : LexCst (expr) -> * ()
+(define-pass eval-Ast : Ast (expr) -> * ()
   (definitions
-    (struct $closure (denv-name cases lenv))
+    (struct $closure (params body env))
 
-    (define/nanopass (LexCst Stmt) (stmt-var _)
+    (define/nanopass (Ast Stmt) (stmt-var _)
       [(def ,n ,e) n]
       [,e #f])
 
@@ -33,30 +32,19 @@
     (define (assign! lenv _ var value)
       (set-box! (lookup lenv undefined var) value))
 
-    (define (continue cont value)
-      ((cont:continue Expr Stmt continue apply primapply assign!) cont value))
+    (define (apply fn args cont _)
+      (match-define ($closure params body lenv) fn)
+      (Expr body cont (clj-merge lenv (case-bindings params args)) undefined))
 
-    (define/match (apply _ args _1 _2)
-      [(($closure denv-name (cons case cases) lenv) (cons denv case-args) cont _)
-       (nanopass-case (LexCst Case) case
-         [(case (,n* ...) ,e? ,e) (guard (eqv? (length n*) (length case-args)))
-          (define lenv* (~> lenv
-                            (hash-set denv-name denv)
-                            (clj-merge (case-bindings n* case-args))))
-          (Expr e?
-                (cont:$precond cont lenv* undefined
-                               e ($closure denv-name cases lenv) args undefined)
-                lenv* undefined)]
-         [(case (,n* ...) ,e? ,e)
-          (apply ($closure denv-name cases lenv) args cont undefined)])]
-      [(($closure _ '() _1) _2 _3 _4) (error "No such method")]))
+    (define (continue cont value)
+      ((cont:continue Expr Stmt continue apply primapply assign!) cont value)))
 
   (Stmt : Stmt (stmt cont lenv _) -> * ()
     [(def ,n ,e) (Expr e (cont:$def cont lenv undefined n) lenv undefined)]
     [,e (Expr e cont lenv undefined)])
 
   (Expr : Expr (expr cont lenv _) -> * ()
-    [(fn ,n ,fc* ...) (continue cont ($closure n fc* lenv))]
+    [(fn (,n* ...) ,e) (continue cont ($closure n* e lenv))]
     [(call ,e ,e* ...) (Expr e (cont:$closure cont lenv undefined e*) lenv undefined)]
     [(primcall ,p) (continue cont (primapply p '()))]
     [(primcall ,p ,e* ...)
@@ -67,6 +55,7 @@
     [(block ,s* ... ,e)
      (let ([lenv (clj-merge lenv (block-bindings s*))])
        (Stmt (car s*) (cont:$block cont lenv undefined (cdr s*) e) lenv undefined))]
+    [(if ,e? ,e1 ,e2) (Expr e? (cont:$if cont lenv undefined e1 e2) lenv undefined)]
     [(const ,c) (continue cont c)]
     [,n
      (define value
