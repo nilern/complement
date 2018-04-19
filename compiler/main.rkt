@@ -27,6 +27,7 @@
            (only-in "passes/codegen.rkt" linearize resolve collect-constants assemble)
 
            (only-in "eval/cst.rkt" eval-Cst)
+           (only-in "eval/lex-cst.rkt" eval-LexCst)
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS))
 
@@ -48,7 +49,7 @@
       'parse             (pass '() (lambda () (parse input)) eval-Cst)
       'alphatize         (pass '(parse) alphatize eval-Cst)
       'lex-straighten    (pass '(alphatize) lex-straighten eval-Cst)
-      'introduce-dyn-env (pass '(lex-straighten) introduce-dyn-env #f)
+      'introduce-dyn-env (pass '(lex-straighten) introduce-dyn-env eval-LexCst)
       'add-dispatch      (pass '(introduce-dyn-env) add-dispatch #f)
 
       'cps-convert      (pass '(add-dispatch) cps-convert eval-CPS)

@@ -60,6 +60,9 @@
         [(lex ,n) (hash-ref lenv n)]
         [(dyn ,n) (hash-ref denv n)]))
 
+    (define (assign! lenv denv var value)
+      (set-box! (lookup lenv denv var) value))
+
     (define/match (apply _ _* _** _***)
       [((value:$closure (cons case cases) lenv) args cont denv)
        (nanopass-case (Cst Case) case
@@ -75,10 +78,10 @@
       [((value:$closure '() lenv) _ _ _) (error "No such method")])
 
     (define (continue cont value)
-      ((cont:continue Expr Stmt continue apply primapply lookup) cont value)))
+      ((cont:continue Expr Stmt continue apply primapply assign!) cont value)))
 
   (Expr : Expr (expr cont lenv denv) -> * ()
-    [(fn ,fc* ...) (continue cont (value:$closure fc* lenv ))]
+    [(fn ,fc* ...) (continue cont (value:$closure fc* lenv))]
     [(call ,e ,e* ...) (Expr e (cont:$closure cont lenv denv e*) lenv denv)]
     [(primcall ,p) (continue cont (primapply p '()))]
     [(primcall ,p ,e* ...)

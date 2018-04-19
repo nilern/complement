@@ -12,7 +12,7 @@
 (struct $def (cont lenv denv var) #:transparent)
 (struct $halt () #:transparent)
 
-(define (continue Expr Stmt continue apply primapply lookup)
+(define (continue Expr Stmt continue apply primapply assign!)
   (match-lambda**
     [(($closure cont lenv denv (cons arge arges)) f)
      (Expr arge ($args cont lenv denv arges f '()) lenv denv)]
@@ -36,7 +36,7 @@
      (Stmt s ($block cont lenv denv s* e) lenv denv)]
 
     [(($def cont lenv denv var) value)
-     (set-box! (lookup lenv denv var) value)
+     (assign! lenv denv var value)
      (continue cont value)] ; `value` is arbitrary here, it won't be used
 
     [(($halt) value) value]))
