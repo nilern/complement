@@ -220,7 +220,7 @@
   (Transfer (t)
     (- (goto x))
     (+ (br n))
-    (+ (jmp x))
+    (+ (jmp i))
     (- (if a? x1 x2))
     (+ (brf a? n))))
 

@@ -174,14 +174,9 @@
      (~> (ash i short-arg-shift)
          (bit-or (ash (encode-arg-atom a?) arg-atom-shift))
          (bit-or (encode-op op)))]
-    [('__jmp (list x))
-     (nanopass-case (ConstPoolAsm Var) x
-       [(label ,n ,i) (~> (ash i arg-index-shift)
-                          (bit-or (encode-op '__jmp)))]
-       [(reg ,i) (~> (ash i arg-index-shift)
-                     (bit-or (encode-op '__ijmp)))]
-       [(proc ,n ,i) (~> (ash i arg-index-shift)
-                         (bit-or (encode-op '__tcall)))])]
+    [('__jmp (list i))
+     (~> (ash i arg-index-shift)
+         (bit-or (encode-op '__ijmp)))]
     [('__ffnCall (list x))
      (nanopass-case (ConstPoolAsm Var) x
        [(reg ,i) (~> (ash i arg-index-shift)
