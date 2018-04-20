@@ -33,7 +33,8 @@
            (only-in "eval/cpcps.rkt" eval-CPCPS eval-RegisterizableCPCPS)
            (only-in "eval/instr-cpcps.rkt" eval-InstrCPCPS)
            (only-in "eval/asm.rkt" eval-Asm)
-           (only-in "eval/resolved-asm.rkt" eval-ResolvedAsm))
+           (only-in "eval/resolved-asm.rkt" eval-ResolvedAsm)
+           (only-in "eval/constpool-asm.rkt" eval-ConstPoolAsm))
 
   (define input  (current-input-port))  ; Where to read source code from
   (define output (current-output-port)) ; Where to write bytecode
@@ -79,7 +80,7 @@
                                  allocate-registers eval-InstrCPCPS)
       'linearize           (pass '(allocate-registers cpcps-label-table) linearize eval-Asm)
       'resolve             (pass '(linearize) resolve eval-ResolvedAsm)
-      'collect-constants   (pass '(resolve) collect-constants #f)
+      'collect-constants   (pass '(resolve) collect-constants eval-ConstPoolAsm)
       'assemble            (pass '(collect-constants) (cute assemble <> output) #f)))
 
   ;; OPTIMIZE: Prune results from `results` when they will not be needed any longer.
