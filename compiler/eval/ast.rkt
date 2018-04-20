@@ -8,7 +8,7 @@
 
          (prefix-in cont: "cont.rkt")
          (only-in "../langs.rkt" Ast)
-         (only-in "../primops.rkt" primapply)
+         (prefix-in primops: "../primops.rkt")
          (only-in "../util.rkt" clj-merge zip-hash)
          (only-in "../nanopass-util.rkt" define/nanopass))
 
@@ -31,6 +31,8 @@
 
     (define (assign! lenv _ var value)
       (set-box! (lookup lenv undefined var) value))
+
+    (define primapply (primops:primapply primops:portable-ops))
 
     (define (apply fn args cont _)
       (match-define ($closure params body lenv) fn)

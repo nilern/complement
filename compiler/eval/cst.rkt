@@ -9,7 +9,7 @@
          (only-in "../nanopass-util.rkt" define/nanopass)
          "../langs.rkt"
          (prefix-in cont: "cont.rkt")
-         (only-in "../primops.rkt" primapply))
+         (prefix-in primops: "../primops.rkt"))
 
 ;;;; Additional value types
 
@@ -62,6 +62,8 @@
 
     (define (assign! lenv denv var value)
       (set-box! (lookup lenv denv var) value))
+
+    (define primapply (primops:primapply primops:portable-ops))
 
     (define/match (apply _ _* _** _***)
       [((value:$closure (cons case cases) lenv) args cont denv)

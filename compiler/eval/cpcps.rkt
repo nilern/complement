@@ -8,7 +8,7 @@
 
          (only-in "../util.rkt" clj-merge zip-hash)
          "../langs.rkt"
-         (only-in "../primops.rkt" primapply))
+         (prefix-in primops: "../primops.rkt"))
 
 ;; TODO: dominator scoping rule
 (define-syntax define-cpcps-eval
@@ -99,13 +99,17 @@
   Atom
   (Expr : Expr (expr curr-fn env) -> * ()
     [,a                    (Atom a curr-fn env)]
-    [(primcall ,p ,a* ...) (primapply p (map (cute Atom <> curr-fn env) a*))]))
+    [(primcall ,p ,a* ...)
+     ((primops:primapply primops:portable-ops) p (map (cute Atom <> curr-fn env) a*))]))
 
 (define-cpcps-eval eval-RegisterizableCPCPS : RegisterizableCPCPS
   Atom
   (Expr : Expr (expr curr-fn env) -> * ()
-    [,a                         (Atom a curr-fn env)]
-    [(primcall0 ,p)             (primapply p '())]
-    [(primcall1 ,p ,a)          (primapply p (map (cute Atom <> curr-fn env) (list a)))]
-    [(primcall2 ,p ,a1 ,a2)     (primapply p (map (cute Atom <> curr-fn env) (list a1 a2)))]
-    [(primcall3 ,p ,a1 ,a2 ,a3) (primapply p (map (cute Atom <> curr-fn env) (list a1 a2 a3)))]))
+    [,a             (Atom a curr-fn env)]
+    [(primcall0 ,p) ((primops:primapply primops:vm-ops) p '())]
+    [(primcall1 ,p ,a)
+     ((primops:primapply primops:vm-ops) p (map (cute Atom <> curr-fn env) (list a)))]
+    [(primcall2 ,p ,a1 ,a2)
+     ((primops:primapply primops:vm-ops) p (map (cute Atom <> curr-fn env) (list a1 a2)))]
+    [(primcall3 ,p ,a1 ,a2 ,a3)
+     ((primops:primapply primops:vm-ops) p (map (cute Atom <> curr-fn env) (list a1 a2 a3)))]))

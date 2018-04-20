@@ -6,7 +6,7 @@
 
          "../util.rkt"
          "../langs.rkt"
-         (only-in "../primops.rkt" primapply))
+         (prefix-in primops: "../primops.rkt"))
 
 ;;;; Values
 
@@ -50,6 +50,8 @@
       (match stmts
         [(cons stmt stmts*) (Stmt stmt env kenv stmts* transfer)]
         ['() (Transfer transfer env kenv)]))
+
+    (define primapply (primops:primapply primops:portable-ops))
 
     (define (apply-label k env kenv args)
       (nanopass-case (CPS Cont) k

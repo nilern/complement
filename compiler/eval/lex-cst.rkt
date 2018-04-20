@@ -9,7 +9,7 @@
 
          (only-in "../langs.rkt" LexCst)
          (prefix-in cont: "cont.rkt")
-         (only-in "../primops.rkt" primapply)
+         (prefix-in primops: "../primops.rkt")
          (only-in "../util.rkt" zip-hash clj-merge)
          (only-in "../nanopass-util.rkt" define/nanopass))
 
@@ -35,6 +35,8 @@
 
     (define (continue cont value)
       ((cont:continue Expr Stmt continue apply primapply assign!) cont value))
+
+    (define primapply (primops:primapply primops:portable-ops))
 
     (define/match (apply _ args _1 _2)
       [(($closure denv-name (cons case cases) lenv) (cons denv case-args) cont _)
