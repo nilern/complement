@@ -3,6 +3,8 @@
 (provide primapply)
 (require racket/match racket/undefined)
 
+;;; TODO: Accomodate changes to ops in instruction selection
+
 ;;;; Internal utilities
 
 ;; Reified primop/instruction.

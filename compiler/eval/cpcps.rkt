@@ -3,30 +3,31 @@
 (provide eval-CPCPS eval-RegisterizableCPCPS)
 (require racket/match
          (only-in srfi/26 cute)
+         (only-in threading ~>)
          nanopass/base
 
          (only-in "../util.rkt" clj-merge zip-hash)
          "../langs.rkt"
          (only-in "../primops.rkt" primapply))
 
-;; TODO: hash<flabel, hash<klabel, cont>>
 ;; TODO: dominator scoping rule
 (define-syntax define-cpcps-eval
   (syntax-rules (:)
    [(_ name : IR Atom (Expr Expr-details ...))
     (define-pass name : IR (prog) -> * ()
       (definitions
-        ;; Maps from continuation labels to IR code and from fn labels to entry continuation labels.
-        (define-values (kenv fenv)
+        ;; A more convenient function code repr than (IR Program) provides.
+        (struct $codeobj (kenv entry))
+
+        ;; Map from function names to $codeobj:s.
+        (define fenv
           (nanopass-case (IR Program) prog
             [(prog ([,n* ,blocks*] (... ...)) ,n)
-             (for/fold ([kenv (hash)]
-                        [fenv (hash)])
-                       ([name n*] [fn-cfg blocks*])
-               (nanopass-case (IR CFG) fn-cfg
-                 [(cfg ([,n1* ,k*] (... ...)) (,n2* (... ...)))
-                  (values (clj-merge kenv (zip-hash n1* k*))
-                          (hash-set fenv name (car n2*)))]))]))
+             (for/hash ([flabel n*] [cfg blocks*])
+               (values flabel
+                       (nanopass-case (IR CFG) cfg
+                         [(cfg ([,n1* ,k*] (... ...)) (,n2* (... ...)))
+                          ($codeobj (zip-hash n1* k*) (car n2*))])))]))
 
         ;; A subcont is essentially the remainder of the cont being executed.
         (struct $subcont (stmts transfer))
@@ -45,7 +46,8 @@
         ;; local continuations and returns.
         (define (goto code-ptr curr-fn env args)
           (match-define ($code-ptr fn-label cont-label) code-ptr)
-          (nanopass-case (IR Cont) (hash-ref kenv cont-label)
+          (define cont (~> fenv (hash-ref fn-label) $codeobj-kenv (hash-ref cont-label)))
+          (nanopass-case (IR Cont) cont
             [(cont (,n* (... ...)) ,s* (... ...) ,t)
              (let ([env (let ([env* (zip-hash n* args)])
                           (if (eq? fn-label curr-fn)
@@ -56,7 +58,7 @@
       ;; Run the program.
       (Program : Program (ir) -> * ()
         [(prog ([,n* ,blocks*] (... ...)) ,n)
-         (goto ($code-ptr n (hash-ref fenv n)) n (hash) '())])
+         (goto ($code-ptr n ($codeobj-entry (hash-ref fenv n))) n (hash) '())])
 
       ;; Execute the Stmt and the rest of the cont.
       (Stmt : Stmt (stmt curr-fn env subcont) -> * ()
@@ -91,7 +93,7 @@
       (Var : Var (_ curr-fn env) -> * ()
         [(lex ,n)   (hash-ref env n)]
         [(label ,n) ($code-ptr curr-fn n)]
-        [(proc ,n)  ($code-ptr n (hash-ref fenv n))]))]))
+        [(proc ,n)  ($code-ptr n ($codeobj-entry (hash-ref fenv n)))]))]))
 
 (define-cpcps-eval eval-CPCPS : CPCPS
   Atom
