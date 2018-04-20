@@ -32,7 +32,8 @@
            (only-in "eval/cps.rkt" eval-CPS)
            (only-in "eval/cpcps.rkt" eval-CPCPS eval-RegisterizableCPCPS)
            (only-in "eval/instr-cpcps.rkt" eval-InstrCPCPS)
-           (only-in "eval/asm.rkt" eval-Asm))
+           (only-in "eval/asm.rkt" eval-Asm)
+           (only-in "eval/resolved-asm.rkt" eval-ResolvedAsm))
 
   (define input  (current-input-port))  ; Where to read source code from
   (define output (current-output-port)) ; Where to write bytecode
@@ -77,7 +78,7 @@
       'allocate-registers  (pass '(select-instructions cpcps-label-table)
                                  allocate-registers eval-InstrCPCPS)
       'linearize           (pass '(allocate-registers cpcps-label-table) linearize eval-Asm)
-      'resolve             (pass '(linearize) resolve #f)
+      'resolve             (pass '(linearize) resolve eval-ResolvedAsm)
       'collect-constants   (pass '(resolve) collect-constants #f)
       'assemble            (pass '(collect-constants) (cute assemble <> output) #f)))
 
