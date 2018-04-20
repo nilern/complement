@@ -30,7 +30,7 @@
            (only-in "eval/lex-cst.rkt" eval-LexCst)
            (only-in "eval/ast.rkt" eval-Ast)
            (only-in "eval/cps.rkt" eval-CPS)
-           (only-in "eval/cpcps.rkt" eval-CPCPS))
+           (only-in "eval/cpcps.rkt" eval-CPCPS eval-RegisterizableCPCPS))
 
   (define input  (current-input-port))  ; Where to read source code from
   (define output (current-output-port)) ; Where to write bytecode
@@ -71,7 +71,7 @@
       'cpcps-label-table   (pass '(closure-convert) ltab:make #f)
       'cpcps-shrink        (pass '(closure-convert cpcps-label-table) cpcps-shrink eval-CPCPS)
 
-      'select-instructions (pass '(cpcps-shrink) select-instructions #f)
+      'select-instructions (pass '(cpcps-shrink) select-instructions eval-RegisterizableCPCPS)
       'allocate-registers  (pass '(select-instructions cpcps-label-table) allocate-registers #f)
       'linearize           (pass '(allocate-registers cpcps-label-table) linearize #f)
       'resolve             (pass '(linearize) resolve #f)
