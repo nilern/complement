@@ -199,15 +199,18 @@
      (define entries
        (filter (lambda (label) (> (hash-ref (hash-ref ltab label) 'escapes) 0)) n*))
      (define rpo (cfg:reverse-postorder cfg-edges entries))
-     (define dom-forest (cfg:dominator-forest cfg-edges rpo entries))
+     (define dom-tree (cfg:dominator-tree cfg-edges rpo entries))
      (define kenv (zip-hash n* k*))
      (define cont-acc (make-cont-acc n))
-     (for ([entry entries])
-       (let loop ([dom-tree (hash-ref dom-forest entry)] [env (hash)])
-         (match-define (cons label children) dom-tree)
-         (define env* (Cont (hash-ref kenv label) label (eq? label n) env fn-acc cont-acc))
-         (for ([child children])
-           (loop child env*))))
+     ;; Preorder traversal of the dominator tree:
+     (let loop ([dom-tree dom-tree] [env (hash)])
+       (match-define (cons label children) dom-tree)
+       (define env*
+         (if (not (eqv? label #t))
+           (Cont (hash-ref kenv label) label (eq? label n) env fn-acc cont-acc)
+           env)) ; The imaginary root has no corresponding (CPS Cont), so do nothing.
+       (for ([child children])
+         (loop child env*)))
      (build-cfg cont-acc)])
 
   (Cont : Cont (ir label fn-entry? env fn-acc cont-acc) -> Cont ()

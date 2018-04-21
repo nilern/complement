@@ -181,8 +181,8 @@
 
 (require (prefix-in reg-pool: (submod "." reg-pool)))
 
-;; TODO: Return multiple values instead of mutating `liveness` and `dom-forests`.
-(define-pass allocate : RegisterizableCPCPS (ir ltabs livenesses dom-forests) -> RegCPCPS ()
+;; TODO: Return multiple values instead of mutating `liveness` and `dom-trees`.
+(define-pass allocate : RegisterizableCPCPS (ir ltabs livenesses dom-trees) -> RegCPCPS ()
   (definitions
     ;; Get the parameter list of a (RegisterizableCPCPS Cont).
     (define (cont-params cont)
@@ -247,20 +247,21 @@
   (CFG : CFG (ir name) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define ltab (hash-ref ltabs name))
-     (define dom-forest (cfg:dominator-forest ltab (cfg:reverse-postorder ltab n2*) n2*))
-     (hash-set! dom-forests name dom-forest)
+     (define dom-tree (cfg:dominator-tree ltab (cfg:reverse-postorder ltab n2*) n2*))
+     (hash-set! dom-trees name dom-tree)
      (define liveness (cfg-liveness ir))
      (hash-set! livenesses name liveness)
      (define env (make-hash))
      (define kenv (zip-hash n1* k*))
      (define cont-acc (make-hash))
      (define hint-table (make-hint-table))
-     (for ([entry n2*])
-       (let loop ([dom-tree (hash-ref dom-forest entry)])
-         (match-define (cons label children) dom-tree)
-         (Cont (hash-ref kenv label) label env ltab liveness hint-table cont-acc)
-         (for ([child children])
-           (loop child))))
+     ;; Preorder traversal of the dominator tree:
+     (let loop ([dom-tree dom-tree])
+       (match-define (cons label children) dom-tree)
+       (unless (eqv? label #t) ; Ignore the imaginary root which has no Cont.
+         (Cont (hash-ref kenv label) label env ltab liveness hint-table cont-acc))
+       (for ([child children])
+         (loop child)))
      (define-values (labels conts) (unzip-hash cont-acc))
      `(cfg ([,labels ,conts] ...) (,n2* ...))])
 
@@ -337,7 +338,7 @@
   hash-atom)
 
 ;; Emit sequential moves for register shuffling at calls.
-(define-pass schedule-moves : RegCPCPS (ir livenesses dom-forests) -> InstrCPCPS ()
+(define-pass schedule-moves : RegCPCPS (ir livenesses dom-trees) -> InstrCPCPS ()
   (definitions
     ;; Is `atom` allocated to the register `reg`?
     (define (atom-in-reg? atom reg)
@@ -481,16 +482,17 @@
   (CFG : CFG (ir name max-regs) -> CFG ()
     [(cfg ([,n1* ,k*] ...) (,n2* ...))
      (define liveness (hash-ref livenesses name))
-     (define dom-forest (hash-ref dom-forests name))
+     (define dom-tree (hash-ref dom-trees name))
      (define kenv (zip-hash n1* k*))
      (define env (make-hash))
      (define cont-acc (make-hash))
-     (for ([entry n2*])
-       (let loop ([dom-tree (hash-ref dom-forest entry)])
-         (match-define (cons label children) dom-tree)
-         (Cont (hash-ref kenv label) label kenv env (hash-ref liveness label) cont-acc max-regs)
-         (for ([child children])
-           (loop child))))
+     ;; Traverse the same way as in `allocate`:
+     (let loop ([dom-tree dom-tree])
+       (match-define (cons label children) dom-tree)
+       (unless (eqv? label #t)
+         (Cont (hash-ref kenv label) label kenv env (hash-ref liveness label) cont-acc max-regs))
+       (for ([child children])
+         (loop child)))
      (define-values (labels conts) (unzip-hash cont-acc))
      `(cfg ([,labels ,conts] ...) (,n2* ...))])
 
@@ -548,6 +550,6 @@
 
 (define (allocate-registers ir ltabs)
   (let ((livenesses (make-hash))
-        (dom-forests (make-hash)))
-    (~> (allocate ir ltabs livenesses dom-forests)
-        (schedule-moves livenesses dom-forests))))
+        (dom-trees (make-hash)))
+    (~> (allocate ir ltabs livenesses dom-trees)
+        (schedule-moves livenesses dom-trees))))
